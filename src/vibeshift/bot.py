@@ -27,6 +27,9 @@ class Handlers:
         # Guilds with a pending/running downtime job; that job fetches up to "now", so live
         # capture must not move their newest cursor.
         self.outstanding_downtime: set[str] = set()
+        # True until the startup downtime-job check completed: live messages arriving before
+        # then must not advance cursors either (the set isn't filled yet).
+        self.startup_pending = True
 
     async def sync_guild(self, guild) -> None:
         gid = str(guild.id)
@@ -45,6 +48,8 @@ class Handlers:
                 str(channel.id), str(channel.guild.id), channel.name, "text")
 
     async def on_message(self, message) -> None:
+        if getattr(message, "guild", None) is None:
+            return  # DM
         nm = to_new_message(message, self.tz)
         if nm is None:
             return
@@ -57,25 +62,41 @@ class Handlers:
         if not rec.get("newest_fetched_id"):
             # First sight of this channel: seed both cursors.
             await self.store.set_cursors(nm.channel_id, newest=mid, oldest=mid)
-        elif nm.guild_id not in self.outstanding_downtime:
+        elif not self.startup_pending and nm.guild_id not in self.outstanding_downtime:
             await self.store.set_cursors(nm.channel_id, newest=mid)
         await self.store.upsert_member(nm.guild_id, nm.author_id, message.author.display_name,
                                        str(message.author.display_avatar.url))
         self.scorer.wake()
 
     async def on_raw_message_edit(self, payload) -> None:
+        if payload.guild_id is None:
+            return
         data = payload.data or {}
         if "content" not in data:
+            return
+        if not data["content"].strip():
+            await self._delete(payload.message_id)  # emptied: no longer scoreable
             return
         ts = data.get("edited_timestamp")
         edited_at = (datetime.fromisoformat(ts.replace("Z", "+00:00"))
                      if ts else datetime.now(timezone.utc))
         await self.scorer.on_edited(str(payload.message_id), data["content"], edited_at)
 
-    async def on_raw_message_delete(self, payload) -> None:
-        msg = await self.store.mark_deleted(str(payload.message_id), datetime.now(timezone.utc))
+    async def _delete(self, message_id) -> None:
+        msg = await self.store.mark_deleted(str(message_id), datetime.now(timezone.utc))
         if msg is not None:
             await self.scorer.on_deleted(msg)
+
+    async def on_raw_message_delete(self, payload) -> None:
+        if payload.guild_id is None:
+            return
+        await self._delete(payload.message_id)
+
+    async def on_raw_bulk_message_delete(self, payload) -> None:
+        if payload.guild_id is None:
+            return
+        for mid in payload.message_ids:
+            await self._delete(mid)
 
 
 def make_bot(settings: Settings | None = None) -> commands.Bot:
@@ -90,7 +111,31 @@ def make_bot(settings: Settings | None = None) -> commands.Bot:
     scorer = Scorer(store, score_batch, settings.score_chunk, tz)
     h = Handlers(store, scorer, tz)
     bot.vibe_handlers = h
-    tasks: list[asyncio.Task] = []  # started once; on_ready can fire on every reconnect
+    tasks: list[asyncio.Task] = []
+    started = False  # on_ready fires on every reconnect; start everything once
+
+    async def retry(what: str, fn):
+        delay = settings.job_poll_seconds
+        while True:
+            try:
+                return await fn()
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - PocketBase may be down
+                log.exception("%s failed; retrying in %.1fs", what, delay)
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, 60)
+
+    async def startup():
+        # Downtime check first (cheap, gates cursor advancement), then the slow member sync.
+        await retry("downtime job check",
+                    lambda: create_downtime_jobs(bot, store, h.outstanding_downtime))
+        h.startup_pending = False
+        # Start the job loop only now, so a job can't finish before its guild is flagged.
+        tasks.append(asyncio.create_task(
+            job_loop(bot, store, tz, settings.job_poll_seconds, h.outstanding_downtime)))
+        for g in list(bot.guilds):
+            await retry(f"sync guild {g.id}", lambda g=g: h.sync_guild(g))
 
     @bot.event
     async def setup_hook():
@@ -98,15 +143,13 @@ def make_bot(settings: Settings | None = None) -> commands.Bot:
 
     @bot.event
     async def on_ready():
-        log.info("Logged in as %s (id=%s)", bot.user, bot.user.id)
-        for g in bot.guilds:
-            await h.sync_guild(g)
-        if tasks:
+        nonlocal started
+        if started:
             return
-        await create_downtime_jobs(bot, store, h.outstanding_downtime)
+        started = True  # synchronous guard, before any await
+        log.info("Logged in as %s (id=%s)", bot.user, bot.user.id)
         tasks.append(asyncio.create_task(scorer.run_forever()))
-        tasks.append(asyncio.create_task(
-            job_loop(bot, store, tz, settings.job_poll_seconds, h.outstanding_downtime)))
+        tasks.append(asyncio.create_task(startup()))
 
     @bot.event
     async def on_message(message: discord.Message):
@@ -131,6 +174,13 @@ def make_bot(settings: Settings | None = None) -> commands.Bot:
             await h.on_raw_message_delete(payload)
         except Exception:  # noqa: BLE001
             log.exception("delete handling failed for %s", payload.message_id)
+
+    @bot.event
+    async def on_raw_bulk_message_delete(payload):
+        try:
+            await h.on_raw_bulk_message_delete(payload)
+        except Exception:  # noqa: BLE001
+            log.exception("bulk delete handling failed")
 
     @bot.event
     async def on_guild_join(guild):

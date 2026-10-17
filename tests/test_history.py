@@ -310,3 +310,26 @@ async def test_job_loop_retries_when_reset_fails():
         await asyncio.sleep(0.02)
     task.cancel()
     assert FlakyStore.calls >= 3
+
+
+async def test_failed_downtime_job_keeps_flag_and_requeues(pb_url):
+    import asyncio
+    async with Store(pb_url) as store:
+        await store.upsert_channel("7", "5", "gen", "text")
+        await store.set_cursors("7", newest="10", oldest="10")
+        ch = FakeChannel(7, "gen", [fm(11)])
+
+        async def boom(*a, **k):
+            raise RuntimeError("discord down")
+            yield
+        ch.history = boom
+        guild = types.SimpleNamespace(id=5, name="g", icon=None, text_channels=[ch])
+        bot = types.SimpleNamespace(guilds=[guild], get_guild=lambda i: guild)
+        out: set = set()
+        await create_downtime_jobs(bot, store, out)
+        task = asyncio.create_task(job_loop(bot, store, TZ, 0.01, out))
+        await asyncio.sleep(0.5)
+        task.cancel()
+        assert out == {"5"}
+        assert await store.has_active_job("5", "downtime")
+        assert (await store.get_channel("7"))["newest_fetched_id"] == "10"

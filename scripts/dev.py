@@ -1,4 +1,6 @@
 """Run PocketBase, the bot and the dashboard dev server together; Ctrl-C stops all."""
+import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -14,12 +16,41 @@ def pump(name: str, proc: subprocess.Popen) -> None:
         sys.stdout.flush()
 
 
+def _killpg(p: subprocess.Popen, sig: int) -> None:
+    try:
+        os.killpg(p.pid, sig)  # each child leads its own session/group
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
+def stop_all(procs: dict[str, subprocess.Popen]) -> None:
+    """SIGINT every process group, wait, then SIGKILL; a second Ctrl-C escalates to SIGKILL."""
+    try:
+        for p in procs.values():
+            _killpg(p, signal.SIGINT)
+        for p in procs.values():
+            try:
+                p.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                pass
+    except KeyboardInterrupt:
+        pass
+    finally:
+        for p in procs.values():
+            _killpg(p, signal.SIGKILL)  # no-op when the group is already gone
+            try:
+                p.wait(timeout=5)
+            except (subprocess.TimeoutExpired, KeyboardInterrupt):
+                pass
+
+
 def main() -> int:
     # PocketBase only via `pixi run pb`: it upserts a superuser first so no browser tab opens.
     # Never pass --open to vite.
+    pixi = os.environ.get("PIXI_EXE") or shutil.which("pixi") or str(Path.home() / ".pixi/bin/pixi")
     cmds = {
-        "pb": ["pixi", "run", "pb"],
-        "bot": ["pixi", "run", "bot"],
+        "pb": [pixi, "run", "pb"],
+        "bot": [pixi, "run", "bot"],
     }
     if (ROOT / "dashboard" / "package.json").exists():
         cmds["dash"] = ["npm", "--prefix", "dashboard", "run", "dev"]
@@ -43,17 +74,7 @@ def main() -> int:
     except KeyboardInterrupt:
         print("\n[dev] stopping...", flush=True)
     finally:
-        for p in procs.values():
-            if p.poll() is None:
-                try:
-                    p.send_signal(signal.SIGINT)  # session leader: signal only it, then group-kill
-                except ProcessLookupError:
-                    pass
-        for p in procs.values():
-            try:
-                p.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                p.kill()
+        stop_all(procs)
     return 0
 
 

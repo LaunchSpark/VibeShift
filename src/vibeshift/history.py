@@ -73,7 +73,7 @@ async def _ingest_channel(job, channel, store: Store, tz, members: set, progress
                 await store.set_cursors(cid, oldest=lo, newest=hi if no_newest else None)
 
 
-async def run_job(job: dict, guild: discord.Guild, store: Store, tz: ZoneInfo) -> None:
+async def run_job(job: dict, guild: discord.Guild, store: Store, tz: ZoneInfo) -> str:
     jid = job["id"]
     await store.update_job(jid, status="running")
     scanned = 0
@@ -98,10 +98,12 @@ async def run_job(job: dict, guild: discord.Guild, store: Store, tz: ZoneInfo) -
         if job["origin"] == "extend" and job.get("target"):
             await store.set_history_depth(str(guild.id), _from_pb(job["target"]))
         await store.update_job(jid, status="done", scanned=scanned, error="; ".join(notes))
+        return "done"
     except Exception as e:  # noqa: BLE001 - job failure is recorded, not raised
         log.exception("history job %s failed", jid)
         await store.update_job(jid, status="failed", scanned=scanned,
                                error="; ".join(notes + [f"{type(e).__name__}: {e}"]))
+        return "failed"
 
 
 async def job_loop(bot, store: Store, tz: ZoneInfo, poll_seconds: float,
@@ -119,19 +121,31 @@ async def job_loop(bot, store: Store, tz: ZoneInfo, poll_seconds: float,
             log.exception("resetting running jobs failed; retrying in %.1fs", delay)
             await asyncio.sleep(delay)
             delay = min(delay * 2, 60)
+    fails: dict[str, int] = {}  # consecutive downtime failures per guild, for backoff
     while True:
         try:
             job = await store.next_pending_job()
             if job:
-                guild = bot.get_guild(int(job["guild_id"]))
-                try:
-                    if guild is None:
+                gid, downtime = job["guild_id"], job["origin"] == "downtime"
+                guild = bot.get_guild(int(gid))
+                if guild is None:
+                    status = "failed"
+                    if not downtime:
                         await store.update_job(job["id"], status="failed", error="guild not available")
                     else:
-                        await run_job(job, guild, store, tz)
-                finally:
-                    if outstanding_downtime is not None and job["origin"] == "downtime":
-                        outstanding_downtime.discard(job["guild_id"])
+                        await store.update_job(job["id"], status="pending", error="guild not available")
+                else:
+                    status = await run_job(job, guild, store, tz)
+                    if status != "done" and downtime:
+                        await store.update_job(job["id"], status="pending")  # retry, keep the flag
+                if downtime:
+                    if status == "done":
+                        fails.pop(gid, None)
+                        if outstanding_downtime is not None:
+                            outstanding_downtime.discard(gid)  # only a finished job covers the gap
+                    else:
+                        fails[gid] = fails.get(gid, 0) + 1
+                        await asyncio.sleep(min(poll_seconds * 2 ** fails[gid], 300))
                 continue
         except asyncio.CancelledError:
             raise
