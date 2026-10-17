@@ -29,9 +29,9 @@ machine (about 5 s per message, measured), and that is explicitly tabled.
    a moving average, the whole server by default.
 3. **Filters.** Narrow the chart by person (the key filter), by channel, and by
    time range. Exclude bots by default.
-4. **Manual history backfill.** The owner can choose to score past history
-   with a chosen look-back range (for example the last 30 days). It never
-   happens automatically.
+4. **History depth.** The owner chooses how far back history goes per
+   server (for example 30 days), and can later extend it further back. The
+   depth never extends automatically.
 
 ## Non-goals (v1)
 
@@ -57,9 +57,9 @@ machine (about 5 s per message, measured), and that is explicitly tabled.
   pill toggles per emotion with colored dots, a smooth multi-line chart with
   point markers and a 0–100% y-axis, and a row of per-emotion stat cards
   ("X (Current)", a big percentage, "Peak: Y%") under the chart.
-- Silent automatic history scraping. Going back further than the bot's own
-  downtime is opt-in, every time. (Filling the gap since the last message the
-  bot saw is automatic; see Scoring priority.)
+- Silent automatic history scraping. Extending history depth is always the
+  owner's choice. (Filling the bot's own downtime gap is automatic; see
+  Scoring priority.)
 
 ## Decided by the owner
 
@@ -71,7 +71,9 @@ machine (about 5 s per message, measured), and that is explicitly tabled.
   PocketBase version are all pinned and versioned in this repo. uv's
   `pyproject.toml` and `uv.lock` setup from the initial scaffold gets migrated.
 - **Default scope:** the whole server.
-- **Backfill:** manual, with a chosen range.
+- **Backfill:** the owner sets how far back to go; there are no arbitrary
+  ranges. Stored history is always contiguous, so the backlog stays in
+  chronological order (see Scoring priority).
 - **Dashboard layout reference:** Statbot's shell (left sidebar with a server
   switcher at the top and page links; a collapsible "Filters" panel at the top
   of the page listing active filters such as "Time — Last 60 days" and
@@ -112,13 +114,11 @@ Discord ──> bot (discord.py, Python) ──> emotion model (laya, in-process
 - **The dashboard** reads PocketBase directly through its JS SDK/REST API.
   There is no separate Python API unless aggregation turns out to need one;
   that call is left to the builder (see below).
-- **Backfill trigger:** the dashboard has a "Backfill history" control (a
-  dialog with a guild, an optional channel set, and a look-back range). It
-  creates a `backfill_jobs` record in PocketBase. The bot watches for pending
-  jobs, pages through Discord history, stores the messages as pending in the
-  pending set, and updates job progress and status, which the
-  dashboard shows. The same mechanism handles downtime catch-up (see Scoring
-  priority).
+- **History depth control:** the Backfill page shows each server's current
+  history depth ("back to DATE") and lets the owner extend it (for example
+  "go back 30 days" → "90 days"). Extending creates a `backfill_jobs` record
+  that the bot picks up. Downtime catch-up uses the same job mechanism (see
+  Scoring priority).
 - **Dev workflow:** pixi tasks start PocketBase, the bot, and the dashboard
   dev server, with one task that starts all three.
 
@@ -126,16 +126,19 @@ Discord ──> bot (discord.py, Python) ──> emotion model (laya, in-process
 
 These are minimum fields; the builder may add more.
 
-- `guilds`: discord_id, name, icon_url
+- `guilds`: discord_id, name, icon_url, history_depth (the requested
+  "back to" date; it can only move earlier)
 - `channels`: discord_id, guild (relation), name, type
 - `members`: discord_id, guild (relation), display_name, avatar_url, is_bot
 - `messages`: discord_id (unique), guild, channel, author (relations),
   created_at (Discord timestamp, not insert time), reply_to_discord_id
   (nullable), content, emotion (top label), probabilities (JSON of all 13),
   confidence, model_id
-- `backfill_jobs`: guild, channels (optional), since, until, origin
-  (downtime/manual), status (pending/running/done/failed), scanned, scored,
-  error
+- `channels` also tracks per-channel fetch cursors: `newest_fetched_id` and
+  `oldest_fetched_id` (the Discord message ids bounding the contiguous stored
+  range).
+- `backfill_jobs`: guild, origin (downtime/extend), target (for extend: the
+  new depth date), status (pending/running/done/failed), scanned, error
 
 Storing `content` is fine; this is local-only, single-user. Messages are
 idempotent on `discord_id`, so live capture and backfill can overlap safely.
@@ -156,33 +159,34 @@ Additional message fields (my calls):
 
 ## Scoring priority (decided by the owner)
 
-There is **one pending set, scored most-recent-first**: a priority queue (a
-max-heap on recency). The scorer always takes the pending message with the
-greatest `priority_at`, where `priority_at = edited_at ?? created_at` (using
-`edited_at` is my call, so that a fresh edit to an old message is re-scored
-right away instead of sinking).
+**The pending backlog is one list in chronological order, scored newest
+first, and the system is designed so that it stays in order.** No heap and no
+re-sorting are needed: the backlog is already sorted, so "pop" is just "fetch
+the pending message with the greatest `priority_at`", using a PocketBase index
+on (`score_status`, `priority_at`). It survives restarts with no rebuild step.
 
-Live messages are by definition the most recent, so they come before backfill
-automatically, with no separate live queue needed. Backfill fills in from
-newest to oldest, so recent chart days complete first.
+`priority_at = edited_at ?? created_at`. Ordering an edit by its edit time is
+my call: an edit is a new event, so it lands at the front like a live message
+and keeps the order intact.
 
-The set is backed by PocketBase, not held in memory: "pop" means "fetch the
-pending message with the max `priority_at`", using an index on
-(`score_status`, `priority_at`). The backlog therefore survives restarts with
-no rebuild step.
+**The invariant: each channel's stored history is one contiguous time range,
+and it only grows at its two ends.** Every way a message enters the system
+adds it at a known boundary, in order:
 
-**Every kind of backfill goes through the same pipeline: a `backfill_jobs`
-record whose fetched messages are stored as pending.** There is no
-special-case path. A job has one of two origins:
+- **Live:** new messages are the newest that exist, so they go at the front.
+- **Downtime catch-up (automatic, `origin = downtime`):** on startup the bot
+  fetches from `newest_fetched_id` up to now. Those messages are newer than
+  everything stored and older than anything arriving live, so they slot in
+  right behind the live messages, still in order.
+- **Extending history depth (owner-initiated, `origin = extend`):** the bot
+  fetches backward from `oldest_fetched_id` to the new depth date. Those
+  messages are older than everything stored, so they go at the back. Discord's
+  history API pages newest to oldest, so each page appends in order.
 
-- **`downtime` (created automatically):** on startup the bot creates one job
-  per guild covering the time since the newest message it stored. This is the
-  only automatically created job.
-- **`manual` (created by the owner):** a range chosen in the dashboard.
-
-Both kinds are fetched, stored, and scored the same way, and both show up in
-the Backfill page's job list with their progress. Add an `origin`
-(downtime/manual) field to `backfill_jobs`.
+Arbitrary ranges are not allowed: a range that doesn't touch the stored
+range's ends would leave a gap and break the invariant. Both job origins use
+the same fetch, store, and score pipeline, and both appear on the Backfill
+page with their progress.
 
 A live message that arrives while an older message is being scored is scored
 next. The current item finishes first, with no preemption mid-inference.
@@ -222,7 +226,7 @@ next. The current item finishes first, with no preemption mid-inference.
 ## Pages (v1)
 
 1. **Emotions:** the chart, stat cards, and filters. This is the landing page.
-2. **Backfill:** start a job and list past jobs with their progress.
+2. **Backfill:** show and extend each server's history depth, and list jobs (downtime and extend) with their progress and the pending count.
 
 Sidebar entries for future pages (Impact, Auto-roles) may appear disabled or
 be omitted.
