@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "vibeshift"
+version = "0.1.0"
+description = "Sentiment Analytics for Discord"
+readme = "README.md"
+# Pinned to 3.11: on Intel macOS, torch stops at 2.2.2, whose torch.compile
+# (used by transformers' ModernBert encoder) refuses Python 3.12+.
+requires-python = ">=3.11,<3.12"
+dependencies = [
+  # marimo-studio pins an exact marimo version, so bump the two together.
+  "marimo==0.25.1",
+  "marimo-studio[recommended]>=0.3.0,<0.4",
+  # marimo-studio 0.3.0 declares click>=8.2 but its CLI crashes on click 8.3.x.
+  "click>=8.5",
+  "anywidget>=0.11",
+  "wigglystuff>=0.5",
+  "discord.py>=2.7,<3",
+  "python-dotenv>=1.0",
+  "laya @ git+https://github.com/NandhaKishorM/laya.git",
+  "huggingface_hub",
+  "tqdm",
+  # torch 2.2.2 is the last Intel-mac build, and it is compiled against NumPy 1.x.
+  "torch<=2.2.2; platform_system == 'Darwin' and platform_machine == 'x86_64'",
+  "numpy<2; platform_system == 'Darwin' and platform_machine == 'x86_64'",
+  # transformers 5 needs a newer torch than 2.2 (fails with `nn` undefined).
+  "transformers<5; platform_system == 'Darwin' and platform_machine == 'x86_64'",
+]
+
+[project.scripts]
+vibeshift-bot = "vibeshift.bot:main"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/vibeshift"]
