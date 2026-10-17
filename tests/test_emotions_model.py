@@ -19,3 +19,4 @@ def test_score_batch_shape():
         assert len(s.probabilities) == 13
         assert abs(sum(s.probabilities.values()) - 1.0) < 0.02
         assert s.emotion == max(s.probabilities, key=s.probabilities.get)
+        assert abs(s.confidence - s.probabilities[s.emotion]) < 1e-3

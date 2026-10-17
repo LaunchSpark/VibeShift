@@ -62,11 +62,14 @@ def score_batch(texts: list[str]) -> list[Score]:
     for result in results:
         detail = result.values["emotion_tracker"]
         probabilities = {k: float(v) for k, v in detail["probabilities"].items()}
+        answer_confidence = detail.get("answer_confidence")
+        if answer_confidence is None:
+            answer_confidence = max(probabilities.values())
         scores.append(
             Score(
                 emotion=max(probabilities, key=probabilities.get),
                 probabilities=probabilities,
-                confidence=float(detail["confidence"]),
+                confidence=float(answer_confidence),
             )
         )
     return scores
