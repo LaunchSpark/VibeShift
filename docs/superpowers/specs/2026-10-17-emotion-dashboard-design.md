@@ -188,11 +188,25 @@ range's ends would leave a gap and break the invariant. Both job origins use
 the same fetch, store, and score pipeline, and both appear on the Backfill
 page with their progress.
 
-Conceptually it behaves like a stack (newest on top), but position comes from
-`priority_at`, **not push order**. Do not implement a literal push-order stack.
-It would break in two cases: a live message arriving partway through downtime
-catch-up would get buried under older catch-up messages pushed after it, and
-messages from extending history depth belong at the bottom, not the top.
+**The backlog is a deque (decided by the owner):** live messages, edits, and
+downtime catch-up push onto the top; extending history depth appends to the
+bottom; the scorer takes **a chunk off the top** each time (chunking also
+sets up `decide_batch` for later speed work).
+
+**Position key (my call, chosen for simplicity and speed):** the Discord
+message ID (a snowflake, which is time-ordered), stored as `priority_key`.
+For an edit, `priority_key = discord.utils.time_snowflake(edited_at)`, so it
+goes on top. Using the ID means:
+
+- No separate push counter and no buffering at startup. With literal push
+  order, live messages arriving during the catch-up fetch would need holding
+  until the gap was pushed, or older gap messages would bury them. With
+  ID-keyed position that race cannot happen.
+- "Take a chunk off the top" = pending messages ordered by `priority_key`
+  descending, limit N, using an index on (`score_status`, `priority_key`).
+
+This replaces the `priority_at` timestamp described above; same order, but an
+integer key.
 
 A live message that arrives while an older message is being scored is scored
 next. The current item finishes first, with no preemption mid-inference.
