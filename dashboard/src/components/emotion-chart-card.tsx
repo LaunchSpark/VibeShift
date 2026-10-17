@@ -1,7 +1,9 @@
 import { CartesianGrid, Line, LineChart, XAxis, YAxis } from 'recharts'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { ChartContainer, ChartTooltip, type ChartConfig } from '@/components/ui/chart'
-import { Toggle } from '@/components/ui/toggle'
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/ui/empty'
+import { Skeleton } from '@/components/ui/skeleton'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { EMOTION_COLORS, LABELS, labelName, type Label } from '@/lib/emotions'
 import type { SeriesPoint } from '@/lib/series'
 
@@ -16,55 +18,106 @@ function dotFor(color: string) {
   }
 }
 
+/** Y-axis ceiling: (max visible value + 5) rounded up to a multiple of 10, capped at 100. */
+function yMax(series: SeriesPoint[], visible: Label[]): number {
+  let max = 0
+  for (const p of series) for (const l of visible) max = Math.max(max, p.values[l] ?? 0)
+  return Math.min(100, Math.ceil((max + 5) / 10) * 10)
+}
+
+function subtitle(days: number, ma: number): string {
+  const span = `Last ${days} ${days === 1 ? 'day' : 'days'}`
+  return ma === 1 ? `${span} · daily probability scores` : `${span} · ${ma}-day moving average of probability scores`
+}
+
+function Header({ days, ma }: { days: number; ma: number }) {
+  return (
+    <CardHeader>
+      <CardTitle className="text-3xl font-light">Emotion Prevalence History</CardTitle>
+      <CardDescription>{subtitle(days, ma)}</CardDescription>
+    </CardHeader>
+  )
+}
+
+export function EmotionChartCardSkeleton({ days, ma }: { days: number; ma: number }) {
+  return (
+    <Card>
+      <Header days={days} ma={ma} />
+      <CardContent className="flex flex-col gap-4">
+        <div className="flex flex-wrap gap-2">
+          {Array.from({ length: 4 }, (_, i) => (
+            <Skeleton key={i} className="h-9 w-28 rounded-full" />
+          ))}
+        </div>
+        <Skeleton className="h-72 w-full" />
+      </CardContent>
+    </Card>
+  )
+}
+
 export function EmotionChartCard({
   series,
   days,
   ma,
   visible,
-  onToggle,
+  onChange,
 }: {
   series: SeriesPoint[]
   days: number
   ma: number
+  /** Canonical LABELS order. */
   visible: Label[]
-  onToggle: (l: Label, on: boolean) => void
+  onChange: (labels: Label[]) => void
 }) {
   const config = Object.fromEntries(
     LABELS.map((l) => [l, { label: labelName(l), color: EMOTION_COLORS[l] }]),
   ) as ChartConfig
   const data = series.map((p) => ({ day: p.day, count: p.count, ...p.values }))
-  const empty = !visible.some((l) => series.some((p) => p.values[l] !== null)) || visible.length === 0
+  const empty = !visible.some((l) => series.some((p) => p.values[l] !== null))
   const last = data.length - 1
   const ticks = data.filter((_, i) => (last - i) % 4 === 0).map((d) => d.day)
+  const top = yMax(series, visible)
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="text-3xl font-light">Emotion Prevalence History</CardTitle>
-        <CardDescription>
-          {`${days}-day ${ma === 1 ? 'daily' : `${ma}-day average`} probability scores extracted from text history`}
-        </CardDescription>
-      </CardHeader>
+      <Header days={days} ma={ma} />
       <CardContent className="flex flex-col gap-4">
-        <div className="flex flex-wrap gap-2">
-          {LABELS.map((l) => (
-            <Toggle
-              key={l}
-              variant="outline"
-              pressed={visible.includes(l)}
-              onPressedChange={(on) => onToggle(l, on)}
-              className="h-9 gap-2 rounded-full px-4 data-[state=off]:opacity-50"
-            >
-              <span className="size-4 rounded-full" style={{ background: EMOTION_COLORS[l] }} />
-              {labelName(l)}
-            </Toggle>
-          ))}
-        </div>
+        <ToggleGroup
+          type="multiple"
+          variant="outline"
+          spacing={2}
+          className="flex-wrap"
+          aria-label="Visible emotions"
+          value={visible}
+          onValueChange={(v) => {
+            // Keep at least one emotion; always report in canonical order.
+            if (v.length) onChange(LABELS.filter((l) => v.includes(l)))
+          }}
+        >
+          {LABELS.map((l) => {
+            const lastOne = visible.length === 1 && visible[0] === l
+            return (
+              <ToggleGroupItem
+                key={l}
+                value={l}
+                disabled={lastOne}
+                aria-label={lastOne ? `${labelName(l)} (at least one emotion must stay visible)` : labelName(l)}
+                className="h-9 rounded-full px-4 data-[state=off]:opacity-50"
+              >
+                <span className="size-4 rounded-full" style={{ background: EMOTION_COLORS[l] }} />
+                {labelName(l)}
+              </ToggleGroupItem>
+            )
+          })}
+        </ToggleGroup>
         <div className="rounded-xl bg-background/40 p-2 sm:p-4">
           {empty ? (
-            <div className="flex h-72 items-center justify-center text-sm text-muted-foreground">
-              No scored messages in this view yet.
-            </div>
+            <Empty className="h-72">
+              <EmptyHeader>
+                <EmptyTitle>No scored messages</EmptyTitle>
+                <EmptyDescription>Nothing in this view has been scored yet. Try a wider range or fewer filters.</EmptyDescription>
+              </EmptyHeader>
+            </Empty>
           ) : (
             <ChartContainer config={config} className="h-72 w-full">
               <LineChart data={data} margin={{ left: 0, right: 28, top: 8 }}>
@@ -79,8 +132,8 @@ export function EmotionChartCard({
                   tick={{ fontFamily: MONO, fontSize: 12 }}
                 />
                 <YAxis
-                  domain={[0, 100]}
-                  ticks={[0, 50, 100]}
+                  domain={[0, top]}
+                  ticks={[0, top / 2, top]}
                   tickFormatter={(v: number) => `${v}%`}
                   tickLine={false}
                   axisLine={false}

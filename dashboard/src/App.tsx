@@ -1,13 +1,15 @@
 import { useEffect, useState } from 'react'
 import { BrowserRouter, Outlet, Route, Routes } from 'react-router'
 import { AppSidebar } from '@/components/app-sidebar'
+import { ErrorAlert } from '@/components/app-alert'
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/ui/empty'
+import { Skeleton } from '@/components/ui/skeleton'
 import { SidebarInset, SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar'
 import { useFilters } from '@/lib/filters'
 import { fetchGuilds, type Guild } from '@/lib/data'
 import type { ShellContext } from '@/lib/shell'
 import EmotionsPage from '@/pages/emotions'
 import BackfillPage from '@/pages/backfill'
-
 
 function Layout() {
   const [filters] = useFilters()
@@ -30,13 +32,21 @@ function Layout() {
         </header>
         <div className="mx-auto w-full max-w-6xl min-w-0 p-4 md:p-8">
           {error ? (
-            <p className="text-sm text-destructive">Could not load guilds: {error}</p>
+            <ErrorAlert title="Could not load guilds" message={error} />
           ) : guilds === null ? (
-            <p className="text-sm text-muted-foreground">Loading…</p>
+            <div className="flex flex-col gap-4">
+              <Skeleton className="h-24 w-full" />
+              <Skeleton className="h-96 w-full" />
+            </div>
           ) : guild ? (
             <Outlet context={{ guilds, guild } satisfies ShellContext} />
           ) : (
-            <p className="text-sm text-muted-foreground">No guilds found.</p>
+            <Empty className="border">
+              <EmptyHeader>
+                <EmptyTitle>No guilds found</EmptyTitle>
+                <EmptyDescription>Add the bot to a Discord server to see its stats here.</EmptyDescription>
+              </EmptyHeader>
+            </Empty>
           )}
         </div>
       </SidebarInset>

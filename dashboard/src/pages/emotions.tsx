@@ -1,93 +1,94 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import { useShell } from '@/lib/shell'
-import { EmotionChartCard } from '@/components/emotion-chart-card'
-import { EmotionStatCards } from '@/components/emotion-stat-cards'
+import { ErrorAlert, InfoAlert } from '@/components/app-alert'
+import { EmotionChartCard, EmotionChartCardSkeleton } from '@/components/emotion-chart-card'
+import { EmotionStatCards, EmotionStatCardsSkeleton } from '@/components/emotion-stat-cards'
 import { FiltersPanel } from '@/components/filters-panel'
-import {
-  fetchChannels,
-  fetchMembers,
-  fetchPendingCount,
-  fetchRollups,
-  type Channel,
-  type Member,
-} from '@/lib/data'
-import type { Label } from '@/lib/emotions'
+import { useFetched } from '@/hooks/use-fetched'
+import { fetchChannels, fetchMembers, fetchPendingCount, fetchRollups } from '@/lib/data'
+import { LABELS, type Label } from '@/lib/emotions'
 import { resolveRange, useFilters } from '@/lib/filters'
-import { buildSeries, shiftDay, topEmotions, type Rollup } from '@/lib/series'
+import { buildSeries, shiftDay, topEmotions } from '@/lib/series'
+import { cn } from '@/lib/utils'
 
 const DAY_MS = 86_400_000
 const todayUtc = () => new Date().toISOString().slice(0, 10)
 
+/** Remounted per guild so no state (rows, channels, ...) leaks between guilds. */
 export default function EmotionsPage() {
   const { guild } = useShell()
-  const [filters, update] = useFilters()
-  const [channels, setChannels] = useState<Channel[]>([])
-  const [members, setMembers] = useState<Member[]>([])
-  const [rows, setRows] = useState<Rollup[]>([])
-  const [pending, setPending] = useState(0)
-  const [error, setError] = useState<string | null>(null)
+  return <EmotionsView key={guild!.guild_id} gid={guild!.guild_id} historyDepth={guild!.history_depth} />
+}
 
-  const gid = guild!.guild_id
-  const { from, to } = useMemo(
-    () => resolveRange(filters, todayUtc(), guild!.history_depth),
-    [filters, guild],
-  )
-  const days = Math.round((Date.parse(to) - Date.parse(from)) / DAY_MS) + 1
+function EmotionsView({ gid, historyDepth }: { gid: string; historyDepth: string | null }) {
+  const [filters, update] = useFilters()
+  const { ma, emotions } = filters
   const peopleKey = filters.people.join(',')
   const channelsKey = filters.channels.join(',')
 
-  useEffect(() => {
-    let live = true
-    Promise.all([fetchChannels(gid), fetchMembers(gid), fetchPendingCount(gid)]).then(
-      ([c, m, p]) => live && (setChannels(c), setMembers(m), setPending(p)),
-      (e) => live && setError(String(e?.message ?? e)),
-    )
-    return () => {
-      live = false
-    }
-  }, [gid])
+  const { from, to } = resolveRange(filters, todayUtc(), historyDepth)
+  const days = Math.round((Date.parse(to) - Date.parse(from)) / DAY_MS) + 1
 
-  useEffect(() => {
-    let live = true
+  const channels = useFetched(gid, () => fetchChannels(gid))
+  const members = useFetched(gid, () => fetchMembers(gid))
+  const pending = useFetched(gid, () => fetchPendingCount(gid))
+  const rollups = useFetched(`${gid}|${from}|${to}|${ma}|${peopleKey}|${channelsKey}`, () =>
     fetchRollups({
       guild: gid,
-      from: shiftDay(from, -(filters.ma - 1)),
+      from: shiftDay(from, -(ma - 1)),
       to,
       channels: channelsKey ? channelsKey.split(',') : [],
       people: peopleKey ? peopleKey.split(',') : [],
-    }).then(
-      (r) => live && (setRows(r), setError(null)),
-      (e) => live && setError(String(e?.message ?? e)),
-    )
-    return () => {
-      live = false
-    }
-  }, [gid, from, to, filters.ma, peopleKey, channelsKey])
+    }),
+  )
+  const rows = rollups.data
 
-  const series = useMemo(() => buildSeries(rows, from, to, filters.ma), [rows, from, to, filters.ma])
-  const visible: Label[] = filters.emotions ?? topEmotions(rows, 4)
-
-  const onToggle = (l: Label, on: boolean) => {
-    const next = on ? [...visible, l] : visible.filter((v) => v !== l)
-    if (next.length) update({ emotions: next })
-  }
+  const series = useMemo(() => (rows ? buildSeries(rows, from, to, ma) : []), [rows, from, to, ma])
+  // Rank over the visible window only, not the moving-average lookback padding.
+  const top = useMemo(
+    () => (rows ? topEmotions(rows.filter((r) => r.day >= from && r.day <= to), 4) : []),
+    [rows, from, to],
+  )
+  const emotionsKey = emotions?.join(',') ?? ''
+  const visible: Label[] = useMemo(() => {
+    const chosen = new Set<Label>(emotionsKey ? (emotionsKey.split(',') as Label[]) : top)
+    return LABELS.filter((l) => chosen.has(l))
+  }, [emotionsKey, top])
 
   return (
     <div className="flex flex-col gap-4">
       <FiltersPanel
         filters={filters}
         update={update}
-        channels={channels}
-        members={members}
+        channels={channels.data ?? []}
+        members={members.data ?? []}
         from={from}
         to={to}
       />
-      {error && <p className="text-sm text-destructive">{error}</p>}
-      {pending > 0 && (
-        <p className="text-sm text-muted-foreground">{pending} messages waiting to be scored</p>
+      {rollups.error && <ErrorAlert title="Could not load emotion data" message={rollups.error} />}
+      {channels.error && <ErrorAlert title="Could not load channels" message={channels.error} />}
+      {members.error && <ErrorAlert title="Could not load people" message={members.error} />}
+      {pending.error && <ErrorAlert title="Could not load pending count" message={pending.error} />}
+      {(pending.data ?? 0) > 0 && <InfoAlert title={`${pending.data} messages waiting to be scored`} />}
+      {rows === null ? (
+        rollups.error ? null : (
+          <>
+            <EmotionChartCardSkeleton days={days} ma={ma} />
+            <EmotionStatCardsSkeleton />
+          </>
+        )
+      ) : (
+        <div className={cn('flex flex-col gap-4 transition-opacity', rollups.loading && 'opacity-60')} aria-busy={rollups.loading}>
+          <EmotionChartCard
+            series={series}
+            days={days}
+            ma={ma}
+            visible={visible}
+            onChange={(next) => update({ emotions: next })}
+          />
+          <EmotionStatCards series={series} visible={visible} />
+        </div>
       )}
-      <EmotionChartCard series={series} days={days} ma={filters.ma} visible={visible} onToggle={onToggle} />
-      <EmotionStatCards series={series} visible={visible} />
     </div>
   )
 }

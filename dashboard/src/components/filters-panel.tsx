@@ -1,13 +1,16 @@
-import { useState, type ReactNode } from 'react'
+import { Fragment, useState, type ReactNode } from 'react'
 import { format, parseISO } from 'date-fns'
 import { Check, ChevronDown, Pencil } from 'lucide-react'
 import type { DateRange } from 'react-day-picker'
+import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Calendar } from '@/components/ui/calendar'
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Separator } from '@/components/ui/separator'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import type { Channel, Member } from '@/lib/data'
 import type { Filters, MovingAverage, RangeKey } from '@/lib/filters'
 
@@ -69,13 +72,66 @@ function MultiSelect({
         <CommandGroup>
           {items.map((it) => (
             <CommandItem key={it.id} value={`${it.name} ${it.id}`} onSelect={() => toggle(it.id)}>
-              <Check className={selected.includes(it.id) ? 'opacity-100' : 'opacity-0'} />
+              <Check className={cn(selected.includes(it.id) ? 'opacity-100' : 'opacity-0')} />
               {it.name}
             </CommandItem>
           ))}
         </CommandGroup>
       </CommandList>
     </Command>
+  )
+}
+
+/**
+ * Preset toggles plus a range calendar. react-day-picker reports a half-finished
+ * range ({ from, to: undefined }) after the first click, so the in-progress pick
+ * lives in a local draft and is committed only once both ends are chosen. The
+ * draft resets when the popover closes (this component unmounts).
+ */
+function TimeEditor({ filters, update, from, to }: { filters: Filters; update: (p: Partial<Filters>) => void; from: string; to: string }) {
+  const [draft, setDraft] = useState<DateRange | undefined>(undefined)
+  const committed: DateRange | undefined =
+    filters.range === 'custom' ? { from: parseISO(from), to: parseISO(to) } : undefined
+
+  const pick = (day: Date) => {
+    if (!draft?.from || draft.to) {
+      setDraft({ from: day, to: undefined })
+      return
+    }
+    const range = day < draft.from ? { from: day, to: draft.from } : { from: draft.from, to: day }
+    setDraft(range)
+    update({ range: 'custom', from: ymd(range.from), to: ymd(range.to) })
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      <ToggleGroup
+        type="single"
+        variant="outline"
+        size="sm"
+        spacing={1}
+        className="flex-wrap"
+        value={filters.range === 'custom' ? '' : filters.range}
+        onValueChange={(v) => {
+          if (v) {
+            setDraft(undefined)
+            update({ range: v as RangeKey })
+          }
+        }}
+      >
+        {PRESETS.map((p) => (
+          <ToggleGroupItem key={p.key} value={p.key}>
+            {p.label}
+          </ToggleGroupItem>
+        ))}
+      </ToggleGroup>
+      <Calendar
+        mode="range"
+        selected={draft ?? committed}
+        defaultMonth={parseISO(to)}
+        onSelect={(_range, day) => pick(day)}
+      />
+    </div>
   )
 }
 
@@ -95,71 +151,80 @@ export function FiltersPanel({
   to: string
 }) {
   const [open, setOpen] = useState(true)
-  const selected: DateRange | undefined = filters.range === 'custom' ? { from: parseISO(from), to: parseISO(to) } : undefined
+  const rows: { label: string; value: string; body: ReactNode }[] = [
+    { label: 'Time', value: timeLabel(filters, from, to), body: <TimeEditor filters={filters} update={update} from={from} to={to} /> },
+    {
+      label: 'Average',
+      value: filters.ma === 1 ? 'Raw' : `${filters.ma} days`,
+      body: (
+        <ToggleGroup
+          type="single"
+          variant="outline"
+          size="sm"
+          spacing={1}
+          value={String(filters.ma)}
+          onValueChange={(v) => v && update({ ma: Number(v) as MovingAverage })}
+        >
+          {MAS.map((m) => (
+            <ToggleGroupItem key={m} value={String(m)} aria-label={m === 1 ? 'Raw' : `${m} days`}>
+              {m === 1 ? 'Raw' : `${m}d`}
+            </ToggleGroupItem>
+          ))}
+        </ToggleGroup>
+      ),
+    },
+    {
+      label: 'People',
+      value: filters.people.length ? `${filters.people.length} selected` : 'Everyone',
+      body: (
+        <MultiSelect
+          items={members.map((m) => ({ id: m.author_id, name: m.display_name || m.author_id }))}
+          selected={filters.people}
+          onChange={(people) => update({ people })}
+          placeholder="Search people…"
+        />
+      ),
+    },
+    {
+      label: 'Channels',
+      value: filters.channels.length ? `${filters.channels.length} selected` : 'All',
+      body: (
+        <MultiSelect
+          items={channels.map((c) => ({ id: c.channel_id, name: `#${c.name}` }))}
+          selected={filters.channels}
+          onChange={(ch) => update({ channels: ch })}
+          placeholder="Search channels…"
+        />
+      ),
+    },
+  ]
+
   return (
-    <Collapsible open={open} onOpenChange={setOpen} className="rounded-xl border bg-card px-4 py-2">
-      <CollapsibleTrigger asChild>
-        <button type="button" className="flex w-full items-center justify-between py-1 text-sm font-medium">
-          Filters
-          <ChevronDown className={`size-4 transition-transform ${open ? 'rotate-180' : ''}`} />
-        </button>
-      </CollapsibleTrigger>
-      <CollapsibleContent>
-        <Row label="Time" value={timeLabel(filters, from, to)}>
-          <div className="flex flex-col gap-2">
-            <div className="flex flex-wrap gap-1">
-              {PRESETS.map((p) => (
-                <Button
-                  key={p.key}
-                  size="sm"
-                  variant={filters.range === p.key ? 'secondary' : 'ghost'}
-                  onClick={() => update({ range: p.key })}
-                >
-                  {p.label}
-                </Button>
-              ))}
-            </div>
-            <Calendar
-              mode="range"
-              selected={selected}
-              defaultMonth={parseISO(to)}
-              onSelect={(r) => {
-                if (r?.from && r?.to) update({ range: 'custom', from: ymd(r.from), to: ymd(r.to) })
-              }}
-            />
-          </div>
-        </Row>
-        <Row label="Average" value={filters.ma === 1 ? 'Raw' : `${filters.ma} days`}>
-          <Select value={String(filters.ma)} onValueChange={(v) => update({ ma: Number(v) as MovingAverage })}>
-            <SelectTrigger className="w-40">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {MAS.map((m) => (
-                <SelectItem key={m} value={String(m)}>
-                  {m === 1 ? 'Raw' : `${m} days`}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </Row>
-        <Row label="People" value={filters.people.length ? `${filters.people.length} selected` : 'Everyone'}>
-          <MultiSelect
-            items={members.map((m) => ({ id: m.author_id, name: m.display_name || m.author_id }))}
-            selected={filters.people}
-            onChange={(people) => update({ people })}
-            placeholder="Search people…"
-          />
-        </Row>
-        <Row label="Channels" value={filters.channels.length ? `${filters.channels.length} selected` : 'All'}>
-          <MultiSelect
-            items={channels.map((c) => ({ id: c.channel_id, name: `#${c.name}` }))}
-            selected={filters.channels}
-            onChange={(ch) => update({ channels: ch })}
-            placeholder="Search channels…"
-          />
-        </Row>
-      </CollapsibleContent>
+    <Collapsible open={open} onOpenChange={setOpen} asChild>
+      <Card size="sm">
+        <CardHeader>
+          <CardTitle>Filters</CardTitle>
+          <CardAction>
+            <CollapsibleTrigger asChild>
+              <Button variant="ghost" size="icon-sm" aria-label={open ? 'Collapse filters' : 'Expand filters'}>
+                <ChevronDown className={cn('transition-transform', open && 'rotate-180')} />
+              </Button>
+            </CollapsibleTrigger>
+          </CardAction>
+        </CardHeader>
+        <CollapsibleContent>
+          <CardContent>
+            {rows.map((r, i) => (
+              <Fragment key={r.label}>
+                {i > 0 && <Separator />}
+                <Row label={r.label} value={r.value}>
+                  {r.body}
+                </Row>
+              </Fragment>
+            ))}
+          </CardContent>
+        </CollapsibleContent>
+      </Card>
     </Collapsible>
   )
 }

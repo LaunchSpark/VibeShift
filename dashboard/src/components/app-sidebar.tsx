@@ -50,7 +50,7 @@ export function AppSidebar({ guilds, guild }: { guilds: Guild[]; guild: Guild | 
               </SidebarMenuItem>
               {SOON.map(({ title, icon: Icon }) => (
                 <SidebarMenuItem key={title}>
-                  <SidebarMenuButton disabled aria-disabled className="opacity-60">
+                  <SidebarMenuButton disabled aria-disabled>
                     <Icon />
                     <span>{title}</span>
                     <Badge variant="secondary" className="ml-auto">Soon</Badge>
