@@ -66,7 +66,7 @@ export async function fetchRollups(p: RollupParams): Promise<Rollup[]> {
 export async function fetchPendingCount(guild: string): Promise<number> {
   const res = await pb
     .collection('messages')
-    .getList(1, 1, { filter: `guild_id = ${q(guild)} && score_status = "pending"`, fields: 'id' })
+    .getList(1, 1, { filter: `guild_id = ${q(guild)} && score_status = "pending" && deleted_at = ""`, fields: 'id' })
   return res.totalItems
 }
 
