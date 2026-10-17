@@ -72,7 +72,7 @@ function MultiSelect({
         <CommandGroup>
           {items.map((it) => (
             <CommandItem key={it.id} value={`${it.name} ${it.id}`} onSelect={() => toggle(it.id)}>
-              <Check className={cn(selected.includes(it.id) ? 'opacity-100' : 'opacity-0')} />
+              <Check className={selected.includes(it.id) ? 'opacity-100' : 'opacity-0'} />
               {it.name}
             </CommandItem>
           ))}
@@ -88,7 +88,7 @@ function MultiSelect({
  * lives in a local draft and is committed only once both ends are chosen. The
  * draft resets when the popover closes (this component unmounts).
  */
-function TimeEditor({ filters, update, from, to }: { filters: Filters; update: (p: Partial<Filters>) => void; from: string; to: string }) {
+function TimeEditor({ filters, update, from, to, today }: { filters: Filters; update: (p: Partial<Filters>) => void; from: string; to: string; today: string }) {
   const [draft, setDraft] = useState<DateRange | undefined>(undefined)
   const committed: DateRange | undefined =
     filters.range === 'custom' ? { from: parseISO(from), to: parseISO(to) } : undefined
@@ -129,6 +129,7 @@ function TimeEditor({ filters, update, from, to }: { filters: Filters; update: (
         mode="range"
         selected={draft ?? committed}
         defaultMonth={parseISO(to)}
+        disabled={{ after: parseISO(today) }}
         onSelect={(_range, day) => pick(day)}
       />
     </div>
@@ -142,6 +143,7 @@ export function FiltersPanel({
   members,
   from,
   to,
+  today,
 }: {
   filters: Filters
   update: (patch: Partial<Filters>) => void
@@ -149,10 +151,11 @@ export function FiltersPanel({
   members: Member[]
   from: string
   to: string
+  today: string
 }) {
   const [open, setOpen] = useState(true)
   const rows: { label: string; value: string; body: ReactNode }[] = [
-    { label: 'Time', value: timeLabel(filters, from, to), body: <TimeEditor filters={filters} update={update} from={from} to={to} /> },
+    { label: 'Time', value: timeLabel(filters, from, to), body: <TimeEditor filters={filters} update={update} from={from} to={to} today={today} /> },
     {
       label: 'Average',
       value: filters.ma === 1 ? 'Raw' : `${filters.ma} days`,

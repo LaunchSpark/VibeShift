@@ -50,4 +50,11 @@ describe('filters', () => {
     const bad = parseFilters(q('range=custom&from=2026-01-01'))
     expect(resolveRange(bad, '2026-03-31', null)).toEqual({ from: '2026-03-02', to: '2026-03-31' })
   })
+
+  it('resolveRange clamps future dates to today', () => {
+    const c = parseFilters(q('range=custom&from=2026-03-20&to=2026-04-10'))
+    expect(resolveRange(c, '2026-03-31', null)).toEqual({ from: '2026-03-20', to: '2026-03-31' })
+    const allFuture = parseFilters(q('range=custom&from=2026-05-01&to=2026-05-10'))
+    expect(resolveRange(allFuture, '2026-03-31', null)).toEqual({ from: '2026-03-31', to: '2026-03-31' })
+  })
 })

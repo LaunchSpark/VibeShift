@@ -9,7 +9,6 @@ import { fetchChannels, fetchMembers, fetchPendingCount, fetchRollups } from '@/
 import { LABELS, type Label } from '@/lib/emotions'
 import { resolveRange, useFilters } from '@/lib/filters'
 import { buildSeries, shiftDay, topEmotions } from '@/lib/series'
-import { cn } from '@/lib/utils'
 
 const DAY_MS = 86_400_000
 const todayUtc = () => new Date().toISOString().slice(0, 10)
@@ -26,7 +25,8 @@ function EmotionsView({ gid, historyDepth }: { gid: string; historyDepth: string
   const peopleKey = filters.people.join(',')
   const channelsKey = filters.channels.join(',')
 
-  const { from, to } = resolveRange(filters, todayUtc(), historyDepth)
+  const today = todayUtc()
+  const { from, to } = resolveRange(filters, today, historyDepth)
   const days = Math.round((Date.parse(to) - Date.parse(from)) / DAY_MS) + 1
 
   const channels = useFetched(gid, () => fetchChannels(gid))
@@ -64,6 +64,7 @@ function EmotionsView({ gid, historyDepth }: { gid: string; historyDepth: string
         members={members.data ?? []}
         from={from}
         to={to}
+        today={today}
       />
       {rollups.error && <ErrorAlert title="Could not load emotion data" message={rollups.error} />}
       {channels.error && <ErrorAlert title="Could not load channels" message={channels.error} />}
@@ -78,7 +79,7 @@ function EmotionsView({ gid, historyDepth }: { gid: string; historyDepth: string
           </>
         )
       ) : (
-        <div className={cn('flex flex-col gap-4 transition-opacity', rollups.loading && 'opacity-60')} aria-busy={rollups.loading}>
+        <>
           <EmotionChartCard
             series={series}
             days={days}
@@ -87,7 +88,7 @@ function EmotionsView({ gid, historyDepth }: { gid: string; historyDepth: string
             onChange={(next) => update({ emotions: next })}
           />
           <EmotionStatCards series={series} visible={visible} />
-        </div>
+        </>
       )}
     </div>
   )

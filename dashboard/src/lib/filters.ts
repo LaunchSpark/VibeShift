@@ -70,6 +70,19 @@ export function resolveRange(
   earliest: string | null,
 ): { from: string; to: string } {
   const last = (n: number) => ({ from: shiftDay(today, -(n - 1)), to: today })
+  const { from, to } = rawRange(f, today, earliest, last)
+  // Never chart the future (covers hand-edited URLs too).
+  const cTo = to > today ? today : to
+  const cFrom = from > cTo ? cTo : from
+  return { from: cFrom, to: cTo }
+}
+
+function rawRange(
+  f: Filters,
+  today: string,
+  earliest: string | null,
+  last: (n: number) => { from: string; to: string },
+): { from: string; to: string } {
   switch (f.range) {
     case '7d': return last(7)
     case '60d': return last(60)

@@ -7,6 +7,7 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { EMOTION_COLORS, LABELS, labelName, type Label } from '@/lib/emotions'
 import type { SeriesPoint } from '@/lib/series'
 
+const LAST_HINT = 'At least one emotion must stay visible'
 const MONO = 'var(--font-mono)'
 
 function dotFor(color: string) {
@@ -90,8 +91,8 @@ export function EmotionChartCard({
           aria-label="Visible emotions"
           value={visible}
           onValueChange={(v) => {
-            // Keep at least one emotion; always report in canonical order.
-            if (v.length) onChange(LABELS.filter((l) => v.includes(l)))
+            // The last visible item is disabled, so v is never empty. Report in canonical order.
+            onChange(LABELS.filter((l) => v.includes(l)))
           }}
         >
           {LABELS.map((l) => {
@@ -101,7 +102,8 @@ export function EmotionChartCard({
                 key={l}
                 value={l}
                 disabled={lastOne}
-                aria-label={lastOne ? `${labelName(l)} (at least one emotion must stay visible)` : labelName(l)}
+                aria-describedby={lastOne ? 'last-emotion-hint' : undefined}
+                title={lastOne ? LAST_HINT : undefined}
                 className="h-9 rounded-full px-4 data-[state=off]:opacity-50"
               >
                 <span className="size-4 rounded-full" style={{ background: EMOTION_COLORS[l] }} />
@@ -110,6 +112,9 @@ export function EmotionChartCard({
             )
           })}
         </ToggleGroup>
+        <span id="last-emotion-hint" className="sr-only">
+          {LAST_HINT}
+        </span>
         <div className="rounded-xl bg-background/40 p-2 sm:p-4">
           {empty ? (
             <Empty className="h-72">
