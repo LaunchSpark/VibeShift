@@ -70,3 +70,5 @@ test = "pytest -m 'not model'"
 test-model = "pytest -m model"
 bot = "vibeshift-bot"
 notebook = "marimo edit notebooks/emotion_tracker.py"
+pb-install = "python scripts/install_pocketbase.py 0.40.5"
+pb = { cmd = "operations/tools/pocketbase/pocketbase serve --http=127.0.0.1:8090 --dir=operations/data/pocketbase --migrationsDir=pb_migrations", depends-on = ["pb-install"] }
