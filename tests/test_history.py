@@ -333,3 +333,54 @@ async def test_failed_downtime_job_keeps_flag_and_requeues(pb_url):
         assert out == {"5"}
         assert await store.has_active_job("5", "downtime")
         assert (await store.get_channel("7"))["newest_fetched_id"] == "10"
+        from vibeshift.bot import Handlers
+        from vibeshift.scorer import Scorer
+        h = Handlers(store, Scorer(store, lambda t: [], 8, TZ), TZ)
+        h.startup_pending = False
+        h.outstanding_downtime = out
+        live = fm(50, channel_id=7)
+        live.guild, live.channel = types.SimpleNamespace(id=5), types.SimpleNamespace(id=7, name="gen")
+        await h.on_message(live)
+        assert (await store.get_channel("7"))["newest_fetched_id"] == "10"  # flag held
+
+
+async def test_failing_guild_does_not_stall_other_jobs(pb_url):
+    import asyncio
+    async with Store(pb_url) as store:
+        await store.upsert_channel("7", "5", "gen", "text")
+        await store.set_cursors("7", newest="10", oldest="10")
+
+        async def boom(*a, **k):
+            raise RuntimeError("down")
+            yield
+        bad = FakeChannel(7, "gen", [])
+        bad.history = boom
+        ga = types.SimpleNamespace(id=5, name="a", icon=None, text_channels=[bad])
+        gb = types.SimpleNamespace(id=6, name="b", icon=None, text_channels=[])
+        bot = types.SimpleNamespace(guilds=[ga, gb],
+                                    get_guild=lambda i: {5: ga, 6: gb}.get(i))
+        out: set = set()
+        await create_downtime_jobs(bot, store, out)  # guild 5 downtime
+        ext = await store.create_job("6", "extend", ts(-5))
+        task = asyncio.create_task(job_loop(bot, store, TZ, 1.0, out))  # backoff >= 2s
+        for _ in range(40):
+            await asyncio.sleep(0.1)
+            if (await store._list("backfill_jobs", f'id="{ext}" && status="done"')):
+                break
+        task.cancel()
+        assert await store._list("backfill_jobs", f'id="{ext}" && status="done"')
+        assert out == {"5"}
+
+
+async def test_downtime_job_for_unknown_guild_fails_and_drops_flag(pb_url):
+    import asyncio
+    async with Store(pb_url) as store:
+        jid = await store.create_job("99", "downtime")
+        bot = types.SimpleNamespace(guilds=[], get_guild=lambda i: None)
+        out = {"99"}
+        task = asyncio.create_task(job_loop(bot, store, TZ, 0.01, out))
+        await asyncio.sleep(0.5)
+        task.cancel()
+        rec = (await store._list("backfill_jobs", f'id="{jid}"'))[0]
+        assert rec["status"] == "failed" and rec["error"] == "bot is not in this guild"
+        assert out == set()

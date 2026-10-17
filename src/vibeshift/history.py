@@ -121,31 +121,38 @@ async def job_loop(bot, store: Store, tz: ZoneInfo, poll_seconds: float,
             log.exception("resetting running jobs failed; retrying in %.1fs", delay)
             await asyncio.sleep(delay)
             delay = min(delay * 2, 60)
-    fails: dict[str, int] = {}  # consecutive downtime failures per guild, for backoff
+    fails: dict[str, int] = {}  # consecutive downtime failures per guild
+    not_before: dict[str, float] = {}  # guild id -> loop time before which it is in backoff
+    loop = asyncio.get_running_loop()
     while True:
         try:
-            job = await store.next_pending_job()
+            now = loop.time()
+            for g in [g for g, t in not_before.items() if t <= now]:
+                del not_before[g]
+            job = await store.next_pending_job(exclude_guild_ids=list(not_before))
             if job:
                 gid, downtime = job["guild_id"], job["origin"] == "downtime"
                 guild = bot.get_guild(int(gid))
                 if guild is None:
-                    status = "failed"
-                    if not downtime:
-                        await store.update_job(job["id"], status="failed", error="guild not available")
-                    else:
-                        await store.update_job(job["id"], status="pending", error="guild not available")
-                else:
-                    status = await run_job(job, guild, store, tz)
-                    if status != "done" and downtime:
-                        await store.update_job(job["id"], status="pending")  # retry, keep the flag
+                    # The bot is not in this guild (left/removed): never requeue forever.
+                    await store.update_job(job["id"], status="failed", error="bot is not in this guild")
+                    if downtime:
+                        fails.pop(gid, None)
+                        if outstanding_downtime is not None:
+                            outstanding_downtime.discard(gid)
+                    continue
+                status = await run_job(job, guild, store, tz)
                 if downtime:
                     if status == "done":
                         fails.pop(gid, None)
                         if outstanding_downtime is not None:
                             outstanding_downtime.discard(gid)  # only a finished job covers the gap
                     else:
+                        # Retry forever (a gap is worse), keeping the recorded error; back off
+                        # this guild only, so other guilds' and extend jobs keep running.
+                        await store.update_job(job["id"], status="pending")
                         fails[gid] = fails.get(gid, 0) + 1
-                        await asyncio.sleep(min(poll_seconds * 2 ** fails[gid], 300))
+                        not_before[gid] = loop.time() + min(poll_seconds * 2 ** fails[gid], 300)
                 continue
         except asyncio.CancelledError:
             raise

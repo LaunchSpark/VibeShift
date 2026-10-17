@@ -254,8 +254,9 @@ class Store:
             body["target"] = _to_pb(target)
         return (await self._create("backfill_jobs", body))["id"]
 
-    async def next_pending_job(self) -> dict | None:
-        items = await self._list("backfill_jobs", 'status="pending"', "created")
+    async def next_pending_job(self, exclude_guild_ids=()) -> dict | None:
+        flt = 'status="pending"' + "".join(f" && guild_id!={_q(g)}" for g in exclude_guild_ids)
+        items = await self._list("backfill_jobs", flt, "created")
         return items[0] if items else None
 
     async def reset_running_jobs(self) -> None:
