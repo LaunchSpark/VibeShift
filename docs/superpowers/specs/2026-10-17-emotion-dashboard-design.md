@@ -188,6 +188,12 @@ range's ends would leave a gap and break the invariant. Both job origins use
 the same fetch, store, and score pipeline, and both appear on the Backfill
 page with their progress.
 
+Conceptually it behaves like a stack (newest on top), but position comes from
+`priority_at`, **not push order**. Do not implement a literal push-order stack.
+It would break in two cases: a live message arriving partway through downtime
+catch-up would get buried under older catch-up messages pushed after it, and
+messages from extending history depth belong at the bottom, not the top.
+
 A live message that arrives while an older message is being scored is scored
 next. The current item finishes first, with no preemption mid-inference.
 
