@@ -1,4 +1,3 @@
-/// <reference path="../pb_data/types.d.ts" />
 // Initial VibeShift schema. This is the contract shared with the dashboard UI:
 // change it only by adding a new migration. All Discord ids are text (snowflakes > 2^53).
 migrate((app) => {
