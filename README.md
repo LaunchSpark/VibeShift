@@ -7,17 +7,20 @@ model.
 
 ## Setup
 
+Install [pixi](https://pixi.sh), then:
+
 ```bash
-uv sync
+pixi install
 ```
 
-Python is pinned to 3.11. On Intel Macs the newest torch is 2.2.2, and its
-`torch.compile` won't run on 3.12 or later.
+PyTorch comes from conda-forge, which still publishes current builds for Intel
+Macs. Run tests with `pixi run test` (or `pixi run test-model` for the real
+model).
 
 ## Notebook
 
 ```bash
-uv run marimo edit notebooks/emotion_tracker.py
+pixi run notebook
 ```
 
 ## Discord bot
@@ -25,7 +28,7 @@ uv run marimo edit notebooks/emotion_tracker.py
 1. Create an app at https://discord.com/developers/applications, add a bot,
    and turn on **Message Content Intent**.
 2. `cp .env.example .env` and set `DISCORD_TOKEN`.
-3. `uv run vibeshift-bot`
+3. `pixi run bot`
 
 The bot logs the emotion of every message it sees, and `!vibe <text>` replies
 with a prediction.

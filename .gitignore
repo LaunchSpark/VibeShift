@@ -182,3 +182,8 @@ cython_debug/
 # Agent workspaces
 .worktrees/
 .superpowers/
+
+# Pixi / local services
+.pixi/
+operations/tools/pocketbase/
+operations/data/
