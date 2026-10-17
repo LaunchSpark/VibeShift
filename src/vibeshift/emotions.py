@@ -1,6 +1,7 @@
 """Emotion classification with the fine-tuned Laya emotion-tracker model."""
 
 import json
+from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
 
@@ -9,6 +10,7 @@ from huggingface_hub import snapshot_download
 from tqdm.auto import tqdm
 
 MODEL_REPO = "LaunchSpark/laya-emotion-tracker"
+MODEL_ID = MODEL_REPO
 
 
 @cache
@@ -41,3 +43,33 @@ def batch_predict_emotions(input_dict: dict) -> dict:
         key: predict_emotion(message)
         for key, message in tqdm(input_dict.items(), desc="Predicting emotions")
     }
+
+
+@dataclass
+class Score:
+    emotion: str
+    probabilities: dict[str, float]
+    confidence: float
+
+
+def score_batch(texts: list[str]) -> list[Score]:
+    """Score texts in one batched call, keeping the full per-label distribution."""
+    if not texts:
+        return []
+    agent, questions = load_model()
+    results = agent.decide_batch(texts, questions=questions, return_details=True)
+    scores = []
+    for result in results:
+        detail = result.values["emotion_tracker"]
+        probabilities = {k: float(v) for k, v in detail["probabilities"].items()}
+        answer_confidence = detail.get("answer_confidence")
+        if answer_confidence is None:
+            answer_confidence = max(probabilities.values())
+        scores.append(
+            Score(
+                emotion=max(probabilities, key=probabilities.get),
+                probabilities=probabilities,
+                confidence=float(answer_confidence),
+            )
+        )
+    return scores

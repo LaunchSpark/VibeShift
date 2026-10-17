@@ -7,9 +7,7 @@ name = "vibeshift"
 version = "0.1.0"
 description = "Sentiment Analytics for Discord"
 readme = "README.md"
-# Pinned to 3.11: on Intel macOS, torch stops at 2.2.2, whose torch.compile
-# (used by transformers' ModernBert encoder) refuses Python 3.12+.
-requires-python = ">=3.11,<3.12"
+requires-python = ">=3.11"
 dependencies = [
   # marimo-studio pins an exact marimo version, so bump the two together.
   "marimo==0.25.1",
@@ -23,11 +21,7 @@ dependencies = [
   "laya @ git+https://github.com/NandhaKishorM/laya.git",
   "huggingface_hub",
   "tqdm",
-  # torch 2.2.2 is the last Intel-mac build, and it is compiled against NumPy 1.x.
-  "torch<=2.2.2; platform_system == 'Darwin' and platform_machine == 'x86_64'",
-  "numpy<2; platform_system == 'Darwin' and platform_machine == 'x86_64'",
-  # transformers 5 needs a newer torch than 2.2 (fails with `nn` undefined).
-  "transformers<5; platform_system == 'Darwin' and platform_machine == 'x86_64'",
+  "httpx>=0.28",
 ]
 
 [project.scripts]
@@ -38,3 +32,48 @@ allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/vibeshift"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+markers = ["model: loads the real emotion model (slow)"]
+
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+# macos = "12.0" lowers the assumed macOS floor so the env resolves on macOS 12.
+platforms = [
+  { name = "mac-intel", platform = "osx-64", macos = "12.0" },
+  { name = "mac-arm", platform = "osx-arm64", macos = "12.0" },
+  "linux-64",
+]
+
+# Heavy native packages come from conda-forge (torch 2.14 ships for osx-64).
+[tool.pixi.dependencies]
+python = "3.12.*"
+pytorch = ">=2.9"
+transformers = "*"
+numpy = "*"
+nodejs = "24.*"
+
+# Everything else from [project.dependencies] is resolved from PyPI by pixi.
+[tool.pixi.pypi-dependencies]
+vibeshift = { path = ".", editable = true }
+
+[tool.pixi.feature.test.dependencies]
+pytest = "*"
+pytest-asyncio = "*"
+
+[tool.pixi.environments]
+default = { features = ["test"] }
+
+[tool.pixi.tasks]
+test = "pytest -m 'not model'"
+test-model = "pytest -m model"
+bot = "vibeshift-bot"
+dev = { cmd = "python scripts/dev.py", depends-on = ["dash-install"] }
+notebook = "marimo edit notebooks/emotion_tracker.py"
+dash-install = "npm --prefix dashboard install"
+dash = "npm --prefix dashboard run dev"
+dash-test = "npm --prefix dashboard test -- --run"
+pb-install = "python scripts/install_pocketbase.py 0.40.5"
+pb-superuser = { cmd = "python scripts/pb_superuser.py", depends-on = ["pb-install"] }
+pb = { cmd = "operations/tools/pocketbase/pocketbase serve --http=127.0.0.1:8090 --dir=operations/data/pocketbase --migrationsDir=pb_migrations --origins=http://localhost:5173,http://127.0.0.1:5173", depends-on = ["pb-superuser"] }

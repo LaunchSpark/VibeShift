@@ -1,0 +1,215 @@
+"""History jobs: downtime catch-up (after newest) and depth extension (before oldest)."""
+import asyncio
+import logging
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+
+import discord
+
+from vibeshift.keys import day_bucket
+from vibeshift.store import NewMessage, Store, _from_pb, _snow_gt
+
+log = logging.getLogger(__name__)
+
+SCAN_EVERY = 100
+GONE_CHECKS = 3  # consecutive "guild gone" checks before a job is failed permanently
+
+
+def to_new_message(m: discord.Message, tz: ZoneInfo) -> NewMessage | None:
+    """Shared with live capture. None for bot authors and empty/whitespace content."""
+    if m.author.bot or not (m.content or "").strip():
+        return None
+    created = m.created_at
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=timezone.utc)
+    created = created.astimezone(timezone.utc)
+    ref = getattr(m, "reference", None)
+    reply = getattr(ref, "message_id", None) if ref else None
+    return NewMessage(
+        message_id=str(m.id), guild_id=str(m.guild.id), channel_id=str(m.channel.id),
+        author_id=str(m.author.id), created_at=created, content=m.content,
+        day=day_bucket(created, tz), reply_to_id=str(reply) if reply else "")
+
+
+async def _ingest_channel(job, channel, store: Store, tz, members: set, progress) -> None:
+    origin = job["origin"]
+    target = _from_pb(job.get("target"))
+    cid = str(channel.id)
+    rec = await store.get_channel(cid)
+    if origin == "downtime":
+        newest = (rec or {}).get("newest_fetched_id") or ""
+        if not newest:
+            return
+        it = channel.history(limit=None, after=discord.Object(id=int(newest)), oldest_first=True)
+    else:
+        oldest = (rec or {}).get("oldest_fetched_id") or ""
+        before = discord.Object(id=int(oldest)) if oldest else None
+        # oldest_first=False is explicit: discord.py flips to oldest-first when `after` is set.
+        it = channel.history(limit=None, before=before, after=target, oldest_first=False)
+
+    hi = lo = None  # extremes seen, bot/empty messages included, to keep the range contiguous
+    try:
+        async for m in it:
+            if origin == "extend" and target and m.created_at <= target:
+                break  # discord.py only filters by `after`; stop paging past the target
+            nm = to_new_message(m, tz)
+            if nm:
+                await store.insert_pending(nm)
+                if nm.author_id not in members:
+                    members.add(nm.author_id)
+                    await store.upsert_member(
+                        nm.guild_id, nm.author_id, m.author.display_name,
+                        str(m.author.display_avatar.url))
+            # Cursors move only after the message was handled, so a failure leaves no hole.
+            mid = str(m.id)
+            hi = mid if hi is None or _snow_gt(mid, hi) else hi
+            lo = mid if lo is None or _snow_gt(lo, mid) else lo
+            await progress()
+    finally:
+        if hi is not None:
+            if origin == "downtime":
+                await store.set_cursors(cid, newest=hi)
+            else:
+                no_newest = not (rec or {}).get("newest_fetched_id")
+                await store.set_cursors(cid, oldest=lo, newest=hi if no_newest else None)
+
+
+async def run_job(job: dict, guild: discord.Guild, store: Store, tz: ZoneInfo) -> str:
+    jid = job["id"]
+    await store.update_job(jid, status="running")
+    scanned = 0
+    notes: list[str] = []
+    members: set[str] = set()
+
+    async def progress():
+        nonlocal scanned
+        scanned += 1
+        if scanned % SCAN_EVERY == 0:
+            await store.update_job(jid, scanned=scanned)
+
+    try:
+        await store.upsert_guild(str(guild.id), guild.name,
+                                 str(guild.icon.url) if getattr(guild, "icon", None) else "")
+        for ch in guild.text_channels:
+            await store.upsert_channel(str(ch.id), str(guild.id), ch.name, "text")
+            try:
+                await _ingest_channel(job, ch, store, tz, members, progress)
+            except discord.Forbidden:
+                notes.append(f"channel {ch.id}: forbidden, skipped")
+        if job["origin"] == "extend" and job.get("target"):
+            await store.set_history_depth(str(guild.id), _from_pb(job["target"]))
+        await store.update_job(jid, status="done", scanned=scanned, error="; ".join(notes))
+        return "done"
+    except Exception as e:  # noqa: BLE001 - job failure is recorded, not raised
+        log.exception("history job %s failed", jid)
+        await store.update_job(jid, status="failed", scanned=scanned,
+                               error="; ".join(notes + [f"{type(e).__name__}: {e}"]))
+        return "failed"
+
+
+async def job_loop(bot, store: Store, tz: ZoneInfo, poll_seconds: float,
+                   outstanding_downtime: set[str] | None = None) -> None:
+    """Run pending jobs forever. `outstanding_downtime` holds guild ids whose downtime job
+    is pending/running; a guild is dropped once its job ends (done, failed, or unrunnable)."""
+    delay = poll_seconds
+    while True:  # resume jobs interrupted by a crash; retry while PocketBase is down
+        try:
+            await store.reset_running_jobs()
+            break
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            log.exception("resetting running jobs failed; retrying in %.1fs", delay)
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, 60)
+    fails: dict[str, int] = {}  # consecutive downtime run failures per guild (backoff only)
+    misses: dict[str, int] = {}  # consecutive checks where the guild was missing (backoff only)
+    gone: dict[str, int] = {}  # consecutive "gone" checks: ready and guild absent from bot.guilds
+    not_before: dict[str, float] = {}  # guild id -> loop time before which it is in backoff
+    loop = asyncio.get_running_loop()
+
+    async def release(gid: str) -> None:
+        # Another downtime job for this guild (queued after a later gap) keeps the flag.
+        if outstanding_downtime is None:
+            return
+        try:
+            if await store.has_active_job(gid, "downtime"):
+                return
+        except Exception:  # noqa: BLE001 - don't freeze the guild's cursors forever
+            log.exception("active-job check failed for guild %s; releasing flag", gid)
+        outstanding_downtime.discard(gid)
+
+    def backoff(gid: str, n: int) -> None:
+        not_before[gid] = loop.time() + min(poll_seconds * 2 ** min(n, 32), 300)
+
+    while True:
+        try:
+            now = loop.time()
+            for g in [g for g, t in not_before.items() if t <= now]:
+                del not_before[g]
+            job = await store.next_pending_job(exclude_guild_ids=list(not_before))
+            if job:
+                gid, downtime = job["guild_id"], job["origin"] == "downtime"
+                guild = bot.get_guild(int(gid))
+                if guild is None or getattr(guild, "unavailable", False):
+                    # Possibly transient (reconnect, outage): retry with backoff, keep the flag.
+                    # Only GONE_CHECKS consecutive "gone" checks fail the job; any other miss
+                    # (not ready, unavailable, still listed in bot.guilds) restarts that count.
+                    is_gone = (guild is None and bot.is_ready()
+                               and int(gid) not in {g.id for g in bot.guilds})
+                    gone[gid] = gone.get(gid, 0) + 1 if is_gone else 0
+                    if gone[gid] >= GONE_CHECKS:
+                        await store.update_job(job["id"], status="failed",
+                                               error="bot is not in this guild")
+                        gone.pop(gid, None)
+                        misses.pop(gid, None)
+                        if downtime:
+                            fails.pop(gid, None)
+                            await release(gid)
+                    else:
+                        misses[gid] = misses.get(gid, 0) + 1
+                        backoff(gid, misses[gid])
+                    continue
+                gone.pop(gid, None)
+                misses.pop(gid, None)
+                status = await run_job(job, guild, store, tz)
+                if downtime:
+                    if status == "done":
+                        fails.pop(gid, None)
+                        await release(gid)  # only a finished job covers the gap
+                    else:
+                        # Retry forever (a gap is worse), keeping the recorded error; back off
+                        # this guild only, so other guilds' and extend jobs keep running.
+                        await store.update_job(job["id"], status="pending")
+                        fails[gid] = fails.get(gid, 0) + 1
+                        backoff(gid, fails[gid])
+                continue
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            log.exception("job loop error")
+        await asyncio.sleep(poll_seconds)
+
+
+async def ensure_downtime_job(store: Store, gid: str, outstanding: set[str] | None = None) -> None:
+    """Queue a downtime job for `gid` unless one is still *pending*, and flag the guild.
+    A running job doesn't count: it may already be past some channels, so it can't be
+    relied on to cover a gap that opened after it started."""
+    if not await store.has_active_job(gid, "downtime", statuses=("pending",)):
+        await store.create_job(gid, "downtime")
+    if outstanding is not None:
+        outstanding.add(gid)
+
+
+async def create_downtime_jobs(bot, store: Store, outstanding: set[str] | None = None,
+                               guilds=None) -> None:
+    """One downtime job per guild with captured history (`guilds`, default bot.guilds),
+    unless one is already pending. Flagged guilds are added to `outstanding` (live capture
+    then leaves their cursors alone)."""
+    for g in list(bot.guilds if guilds is None else guilds):
+        gid = str(g.id)
+        for ch in g.text_channels:
+            rec = await store.get_channel(str(ch.id))
+            if rec and rec.get("newest_fetched_id"):
+                await ensure_downtime_job(store, gid, outstanding)
+                break
