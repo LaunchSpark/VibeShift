@@ -116,7 +116,7 @@ Discord ──> bot (discord.py, Python) ──> emotion model (laya, in-process
   dialog with a guild, an optional channel set, and a look-back range). It
   creates a `backfill_jobs` record in PocketBase. The bot watches for pending
   jobs, pages through Discord history, stores the messages as pending in the
-  low-priority backfill queue, and updates job progress and status, which the
+  pending set, and updates job progress and status, which the
   dashboard shows. The same mechanism handles downtime catch-up (see Scoring
   priority).
 - **Dev workflow:** pixi tasks start PocketBase, the bot, and the dashboard
@@ -145,7 +145,7 @@ Additional message fields (my calls):
 - `score_status` (pending/scored/failed): **store first, score later.** At
   about 5 s per message the scorer lags behind a busy server, so a message is
   saved as `pending` the moment it arrives, and a worker scores pending
-  messages in order. The backlog survives bot restarts, and nothing that
+  messages most-recent-first (see Scoring priority). The backlog survives bot restarts, and nothing that
   arrived is dropped. Score fields are nullable until scored. The chart only
   uses scored messages; the dashboard shows the pending count.
 - `edited_at`: on edit, update `content` and set the message back to `pending`
@@ -156,17 +156,24 @@ Additional message fields (my calls):
 
 ## Scoring priority (decided by the owner)
 
-There are **two separate queues**, and one scorer drains them by strict
-priority:
+There is **one pending set, scored most-recent-first**: a priority queue (a
+max-heap on recency). The scorer always takes the pending message with the
+greatest `priority_at`, where `priority_at = edited_at ?? created_at` (using
+`edited_at` is my call, so that a fresh edit to an old message is re-scored
+right away instead of sinking).
 
-1. **Live queue:** messages that arrive while the bot is running. These always
-   go first.
-2. **Backfill queue:** lower priority. The scorer takes from it only when the
-   live queue is empty.
+Live messages are by definition the most recent, so they come before backfill
+automatically, with no separate live queue needed. Backfill fills in from
+newest to oldest, so recent chart days complete first.
+
+The set is backed by PocketBase, not held in memory: "pop" means "fetch the
+pending message with the max `priority_at`", using an index on
+(`score_status`, `priority_at`). The backlog therefore survives restarts with
+no rebuild step.
 
 **Every kind of backfill goes through the same pipeline: a `backfill_jobs`
-record feeding the backfill queue.** There is no special-case path. A job has
-one of two origins:
+record whose fetched messages are stored as pending.** There is no
+special-case path. A job has one of two origins:
 
 - **`downtime` (created automatically):** on startup the bot creates one job
   per guild covering the time since the newest message it stored. This is the
@@ -177,10 +184,8 @@ Both kinds are fetched, stored, and scored the same way, and both show up in
 the Backfill page's job list with their progress. Add an `origin`
 (downtime/manual) field to `backfill_jobs`.
 
-A live message that arrives mid-backfill is scored next. The backfill item
-being scored at that moment finishes first, with no preemption mid-inference.
-Ordering within the backfill queue is the builder's call (newest-first is
-suggested, so recent charts fill in first).
+A live message that arrives while an older message is being scored is scored
+next. The current item finishes first, with no preemption mid-inference.
 
 ## Emotion chart semantics
 
