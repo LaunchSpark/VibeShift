@@ -115,9 +115,10 @@ Discord ──> bot (discord.py, Python) ──> emotion model (laya, in-process
 - **Backfill trigger:** the dashboard has a "Backfill history" control (a
   dialog with a guild, an optional channel set, and a look-back range). It
   creates a `backfill_jobs` record in PocketBase. The bot watches for pending
-  jobs, pages through Discord history, scores the messages, and updates job
-  progress and status, which the dashboard shows. (This is my call; the owner
-  asked only that backfill be manual and range-based.)
+  jobs, pages through Discord history, stores the messages as pending in the
+  low-priority backfill queue, and updates job progress and status, which the
+  dashboard shows. The same mechanism handles downtime catch-up (see Scoring
+  priority).
 - **Dev workflow:** pixi tasks start PocketBase, the bot, and the dashboard
   dev server, with one task that starts all three.
 
@@ -132,8 +133,9 @@ These are minimum fields; the builder may add more.
   created_at (Discord timestamp, not insert time), reply_to_discord_id
   (nullable), content, emotion (top label), probabilities (JSON of all 13),
   confidence, model_id
-- `backfill_jobs`: guild, channels (optional), since, until, status
-  (pending/running/done/failed), scanned, scored, error
+- `backfill_jobs`: guild, channels (optional), since, until, origin
+  (downtime/manual), status (pending/running/done/failed), scanned, scored,
+  error
 
 Storing `content` is fine; this is local-only, single-user. Messages are
 idempotent on `discord_id`, so live capture and backfill can overlap safely.
@@ -154,22 +156,31 @@ Additional message fields (my calls):
 
 ## Scoring priority (decided by the owner)
 
-There is one scoring backlog with two priority levels:
+There are **two separate queues**, and one scorer drains them by strict
+priority:
 
-1. **Live:** messages that arrive while the bot is running. These always go
-   first.
-2. **Backlog:** everything else. The scorer works on it only when no live
-   messages are waiting. Two sources feed it:
-   - **Downtime catch-up (automatic):** on startup, for each channel, the bot
-     fetches the messages posted since the newest message it stored, saves
-     them as pending, and adds them to the backlog. This is the only automatic
-     history fetch.
-   - **Manual backfill:** a `backfill_jobs` range the owner started.
+1. **Live queue:** messages that arrive while the bot is running. These always
+   go first.
+2. **Backfill queue:** lower priority. The scorer takes from it only when the
+   live queue is empty.
 
-A live message that arrives mid-backlog is scored next. The backlog item being
-scored at that moment finishes first, with no preemption mid-inference.
-Ordering within the backlog is the builder's call (newest-first is suggested,
-so recent charts fill in first).
+**Every kind of backfill goes through the same pipeline: a `backfill_jobs`
+record feeding the backfill queue.** There is no special-case path. A job has
+one of two origins:
+
+- **`downtime` (created automatically):** on startup the bot creates one job
+  per guild covering the time since the newest message it stored. This is the
+  only automatically created job.
+- **`manual` (created by the owner):** a range chosen in the dashboard.
+
+Both kinds are fetched, stored, and scored the same way, and both show up in
+the Backfill page's job list with their progress. Add an `origin`
+(downtime/manual) field to `backfill_jobs`.
+
+A live message that arrives mid-backfill is scored next. The backfill item
+being scored at that moment finishes first, with no preemption mid-inference.
+Ordering within the backfill queue is the builder's call (newest-first is
+suggested, so recent charts fill in first).
 
 ## Emotion chart semantics
 
