@@ -15,6 +15,7 @@ downloads/
 eggs/
 .eggs/
 lib/
+!dashboard/src/lib/
 lib64/
 parts/
 sdist/
@@ -187,3 +188,7 @@ cython_debug/
 .pixi/
 operations/tools/pocketbase/
 operations/data/
+
+# Dashboard
+dashboard/node_modules/
+dashboard/dist/
