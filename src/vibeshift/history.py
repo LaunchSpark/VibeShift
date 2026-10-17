@@ -122,6 +122,7 @@ async def job_loop(bot, store: Store, tz: ZoneInfo, poll_seconds: float,
             await asyncio.sleep(delay)
             delay = min(delay * 2, 60)
     fails: dict[str, int] = {}  # consecutive downtime failures per guild
+    misses: dict[str, int] = {}  # consecutive checks where the guild was unavailable
     not_before: dict[str, float] = {}  # guild id -> loop time before which it is in backoff
     loop = asyncio.get_running_loop()
     while True:
@@ -133,14 +134,25 @@ async def job_loop(bot, store: Store, tz: ZoneInfo, poll_seconds: float,
             if job:
                 gid, downtime = job["guild_id"], job["origin"] == "downtime"
                 guild = bot.get_guild(int(gid))
-                if guild is None:
-                    # The bot is not in this guild (left/removed): never requeue forever.
-                    await store.update_job(job["id"], status="failed", error="bot is not in this guild")
-                    if downtime:
-                        fails.pop(gid, None)
-                        if outstanding_downtime is not None:
-                            outstanding_downtime.discard(gid)
+                if guild is None or getattr(guild, "unavailable", False):
+                    # Possibly transient (reconnect, outage): retry with backoff, keep the flag.
+                    misses[gid] = misses.get(gid, 0) + 1
+                    gone = (guild is None and bot.is_ready()
+                            and int(gid) not in {g.id for g in bot.guilds})
+                    if gone and misses[gid] >= 3:
+                        await store.update_job(job["id"], status="failed",
+                                               error="bot is not in this guild")
+                        misses.pop(gid, None)
+                        if downtime:
+                            fails.pop(gid, None)
+                            if outstanding_downtime is not None:
+                                outstanding_downtime.discard(gid)
+                    else:
+                        if not gone:
+                            misses[gid] = min(misses[gid], 2)  # only "gone while ready" counts to 3
+                        not_before[gid] = loop.time() + min(poll_seconds * 2 ** misses[gid], 300)
                     continue
+                misses.pop(gid, None)
                 status = await run_job(job, guild, store, tz)
                 if downtime:
                     if status == "done":

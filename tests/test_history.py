@@ -376,7 +376,7 @@ async def test_downtime_job_for_unknown_guild_fails_and_drops_flag(pb_url):
     import asyncio
     async with Store(pb_url) as store:
         jid = await store.create_job("99", "downtime")
-        bot = types.SimpleNamespace(guilds=[], get_guild=lambda i: None)
+        bot = types.SimpleNamespace(guilds=[], get_guild=lambda i: None, is_ready=lambda: True)
         out = {"99"}
         task = asyncio.create_task(job_loop(bot, store, TZ, 0.01, out))
         await asyncio.sleep(0.5)
@@ -384,3 +384,23 @@ async def test_downtime_job_for_unknown_guild_fails_and_drops_flag(pb_url):
         rec = (await store._list("backfill_jobs", f'id="{jid}"'))[0]
         assert rec["status"] == "failed" and rec["error"] == "bot is not in this guild"
         assert out == set()
+
+
+async def test_transient_missing_guild_keeps_job_and_flag(pb_url):
+    import asyncio
+    async with Store(pb_url) as store:
+        jid = await store.create_job("99", "downtime")
+        for bot in (
+            types.SimpleNamespace(guilds=[], get_guild=lambda i: None, is_ready=lambda: False),
+            types.SimpleNamespace(guilds=[types.SimpleNamespace(id=99)],
+                                  get_guild=lambda i: types.SimpleNamespace(id=99, unavailable=True),
+                                  is_ready=lambda: True),
+            types.SimpleNamespace(guilds=[types.SimpleNamespace(id=99)],
+                                  get_guild=lambda i: None, is_ready=lambda: True),
+        ):
+            out = {"99"}
+            task = asyncio.create_task(job_loop(bot, store, TZ, 0.01, out))
+            await asyncio.sleep(0.6)
+            task.cancel()
+            rec = (await store._list("backfill_jobs", f'id="{jid}"'))[0]
+            assert rec["status"] == "pending" and out == {"99"}
