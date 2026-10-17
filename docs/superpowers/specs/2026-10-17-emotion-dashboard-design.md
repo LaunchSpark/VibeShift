@@ -161,13 +161,9 @@ Additional message fields (my calls):
 
 **The pending backlog is one list in chronological order, scored newest
 first, and the system is designed so that it stays in order.** No heap and no
-re-sorting are needed: the backlog is already sorted, so "pop" is just "fetch
-the pending message with the greatest `priority_at`", using a PocketBase index
-on (`score_status`, `priority_at`). It survives restarts with no rebuild step.
-
-`priority_at = edited_at ?? created_at`. Ordering an edit by its edit time is
-my call: an edit is a new event, so it lands at the front like a live message
-and keeps the order intact.
+re-sorting are needed: the backlog is already sorted (see the deque and
+position key below). It lives in PocketBase, so it survives restarts with no
+rebuild step. An edit is treated as a new event and goes on top (my call).
 
 **The invariant: each channel's stored history is one contiguous time range,
 and it only grows at its two ends.** Every way a message enters the system
@@ -204,9 +200,6 @@ goes on top. Using the ID means:
   ID-keyed position that race cannot happen.
 - "Take a chunk off the top" = pending messages ordered by `priority_key`
   descending, limit N, using an index on (`score_status`, `priority_key`).
-
-This replaces the `priority_at` timestamp described above; same order, but an
-integer key.
 
 A live message that arrives while an older message is being scored is scored
 next. The current item finishes first, with no preemption mid-inference.
