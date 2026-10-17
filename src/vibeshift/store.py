@@ -129,7 +129,9 @@ class Store:
 
     async def set_history_depth(self, guild_id: str, depth: datetime) -> None:
         rec = await self._first("guilds", f"guild_id={_q(guild_id)}")
-        if rec:
+        # Depth only grows earlier: never let a shallower extend shrink it.
+        cur = _from_pb(rec.get("history_depth")) if rec else None
+        if rec and (cur is None or depth < cur):
             await self._patch("guilds", rec["id"], {"history_depth": _to_pb(depth)})
 
     async def upsert_channel(self, channel_id: str, guild_id: str, name: str, type: str) -> None:
@@ -255,6 +257,10 @@ class Store:
     async def next_pending_job(self) -> dict | None:
         items = await self._list("backfill_jobs", 'status="pending"', "created")
         return items[0] if items else None
+
+    async def reset_running_jobs(self) -> None:
+        for r in await self._list("backfill_jobs", 'status="running"', "created", per_page=200):
+            await self._patch("backfill_jobs", r["id"], {"status": "pending"})
 
     async def update_job(self, id: str, **fields: Any) -> None:
         for k, v in fields.items():

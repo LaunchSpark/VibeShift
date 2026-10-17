@@ -37,6 +37,8 @@ class FakeChannel:
     def __init__(self, id, name, msgs, forbidden=False):
         self.id, self.name, self.msgs, self.forbidden = id, name, msgs, forbidden
         self.calls = []
+        self.yielded = 0
+        self.ignore_after = False
 
     async def history(self, limit=100, before=None, after=None, oldest_first=None):
         self.calls.append(dict(before=before, after=after, oldest_first=oldest_first))
@@ -48,10 +50,11 @@ class FakeChannel:
                 return True
             v, mv = (bound.id, m.id) if hasattr(bound, "id") else (bound, m.created_at)
             return mv > v if gt else mv < v
-        out = [m for m in self.msgs if ok(m, after, True) and ok(m, before, False)]
+        out = [m for m in self.msgs if (self.ignore_after or ok(m, after, True)) and ok(m, before, False)]
         # discord.py defaults to oldest_first when `after` is given
         asc = oldest_first if oldest_first is not None else after is not None
         for m in sorted(out, key=lambda m: m.id, reverse=not asc):
+            self.yielded += 1
             yield m
 
 
@@ -203,4 +206,67 @@ async def test_job_loop_runs_pending_job(store):
         if await store.next_pending_job() is None and "110" in await all_ids(store):
             break
     t.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await t
     assert await all_ids(store) == ["110"]
+
+
+class Flaky:
+    """Store proxy whose insert_pending raises on one message id."""
+    def __init__(self, store, bad):
+        self._s, self._bad = store, bad
+
+    def __getattr__(self, k):
+        return getattr(self._s, k)
+
+    async def insert_pending(self, nm):
+        if nm.message_id == self._bad:
+            raise RuntimeError("db down")
+        return await self._s.insert_pending(nm)
+
+
+async def test_downtime_cursor_stops_before_failed_message(store):
+    await store.upsert_channel("7", "5", "gen", "text")
+    await store.set_cursors("7", newest="100", oldest="100")
+    ch = FakeChannel(7, "gen", [fm(110), fm(120), fm(130)])
+    j = await job(store, "downtime")
+    await run_job(j, guild(ch), Flaky(store, "120"), TZ)
+    assert (await store.get_channel("7"))["newest_fetched_id"] == "110"
+    assert (await final(store, j))["status"] == "failed"
+
+
+async def test_extend_cursor_stops_before_failed_message(store):
+    await store.upsert_channel("7", "5", "gen", "text")
+    await store.set_cursors("7", newest="50", oldest="50")
+    ch = FakeChannel(7, "gen", [fm(20, created=ts(-5)), fm(30, created=ts(-4)), fm(40, created=ts(-3))])
+    j = await job(store, "extend", ts(-10))
+    await run_job(j, guild(ch), Flaky(store, "30"), TZ)
+    assert (await store.get_channel("7"))["oldest_fetched_id"] == "40"
+
+
+async def test_later_extend_does_not_shrink_depth(store):
+    ch = FakeChannel(7, "gen", [])
+    for t in (ts(-100), ts(-10)):
+        j = await job(store, "extend", t)
+        await run_job(j, guild(ch), store, TZ)
+    g = await store._first("guilds", 'guild_id="5"')
+    assert g["history_depth"].startswith(ts(-100).strftime("%Y-%m-%d %H:%M"))
+
+
+async def test_extend_breaks_past_target(store):
+    msgs = [fm(i, created=ts(i - 30)) for i in range(1, 30)]
+    ch = FakeChannel(7, "gen", msgs)
+    ch.ignore_after = True
+    j = await job(store, "extend", ts(-5))
+    await run_job(j, guild(ch), store, TZ)
+    assert ch.yielded <= 5
+    assert sorted(await all_ids(store)) == ["26", "27", "28", "29"]
+
+
+async def test_reset_running_jobs(store):
+    await store.create_job("5", "downtime")
+    j = await store.next_pending_job()
+    await store.update_job(j["id"], status="running")
+    assert await store.next_pending_job() is None
+    await store.reset_running_jobs()
+    assert (await store.next_pending_job())["id"] == j["id"]

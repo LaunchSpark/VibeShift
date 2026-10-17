@@ -32,6 +32,7 @@ def to_new_message(m: discord.Message, tz: ZoneInfo) -> NewMessage | None:
 
 async def _ingest_channel(job, channel, store: Store, tz, members: set, progress) -> None:
     origin = job["origin"]
+    target = _from_pb(job.get("target"))
     cid = str(channel.id)
     rec = await store.get_channel(cid)
     if origin == "downtime":
@@ -42,16 +43,14 @@ async def _ingest_channel(job, channel, store: Store, tz, members: set, progress
     else:
         oldest = (rec or {}).get("oldest_fetched_id") or ""
         before = discord.Object(id=int(oldest)) if oldest else None
-        target = _from_pb(job.get("target"))
         # oldest_first=False is explicit: discord.py flips to oldest-first when `after` is set.
         it = channel.history(limit=None, before=before, after=target, oldest_first=False)
 
     hi = lo = None  # extremes seen, bot/empty messages included, to keep the range contiguous
     try:
         async for m in it:
-            mid = str(m.id)
-            hi = mid if hi is None or _snow_gt(mid, hi) else hi
-            lo = mid if lo is None or _snow_gt(lo, mid) else lo
+            if origin == "extend" and target and m.created_at <= target:
+                break  # discord.py only filters by `after`; stop paging past the target
             nm = to_new_message(m, tz)
             if nm:
                 await store.insert_pending(nm)
@@ -60,6 +59,10 @@ async def _ingest_channel(job, channel, store: Store, tz, members: set, progress
                     await store.upsert_member(
                         nm.guild_id, nm.author_id, m.author.display_name,
                         str(m.author.display_avatar.url))
+            # Cursors move only after the message was handled, so a failure leaves no hole.
+            mid = str(m.id)
+            hi = mid if hi is None or _snow_gt(mid, hi) else hi
+            lo = mid if lo is None or _snow_gt(lo, mid) else lo
             await progress()
     finally:
         if hi is not None:
@@ -102,6 +105,7 @@ async def run_job(job: dict, guild: discord.Guild, store: Store, tz: ZoneInfo) -
 
 
 async def job_loop(bot, store: Store, tz: ZoneInfo, poll_seconds: float) -> None:
+    await store.reset_running_jobs()  # resume jobs interrupted by a crash
     while True:
         try:
             job = await store.next_pending_job()
