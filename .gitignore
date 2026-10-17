@@ -187,3 +187,7 @@ cython_debug/
 .pixi/
 operations/tools/pocketbase/
 operations/data/
+
+# Dashboard
+dashboard/node_modules/
+dashboard/dist/
