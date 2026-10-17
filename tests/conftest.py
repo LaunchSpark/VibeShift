@@ -34,17 +34,18 @@ def pb_url(pb_binary, tmp_path) -> str:
     migrations = f"--migrationsDir={ROOT / 'pb_migrations'}"
     # A superuser must exist before serve, otherwise PocketBase opens the installer in a browser.
     subprocess.run(
-        [str(pb_binary), "superuser", "upsert", "test@vibeshift.local", "test-password-123",
+        [str(pb_binary), "superuser", "upsert", "admin@example.com", "12345678",
          data_dir, migrations],
         check=True, capture_output=True,
     )
-    log = open(tmp_path / "pb.log", "wb")
-    proc = subprocess.Popen(
-        [str(pb_binary), "serve", f"--http=127.0.0.1:{port}", data_dir, migrations],
-        stdout=log, stderr=subprocess.STDOUT,
-    )
+    log = proc = None
     url = f"http://127.0.0.1:{port}"
     try:
+        log = open(tmp_path / "pb.log", "wb")
+        proc = subprocess.Popen(
+            [str(pb_binary), "serve", f"--http=127.0.0.1:{port}", data_dir, migrations],
+            stdout=log, stderr=subprocess.STDOUT,
+        )
         deadline = time.time() + 30
         while True:
             try:
@@ -57,8 +58,11 @@ def pb_url(pb_binary, tmp_path) -> str:
             time.sleep(0.1)
         yield url
     finally:
-        proc.kill()
-        proc.wait()
-        log.close()
-        text = (tmp_path / "pb.log").read_text(errors="replace")
-        assert "Launch the URL" not in text, "PocketBase tried to open the installer"
+        if proc:
+            proc.kill()
+            proc.wait()
+        if log:
+            log.close()
+        if log:
+            text = (tmp_path / "pb.log").read_text(errors="replace")
+            assert "Launch the URL" not in text, "PocketBase tried to open the installer"

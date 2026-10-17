@@ -22,8 +22,8 @@ def _dotenv() -> dict[str, str]:
 
 if __name__ == "__main__":
     cfg = {**_dotenv(), **os.environ}
-    email = cfg.get("PB_SUPERUSER_EMAIL") or "admin@vibeshift.local"
-    password = cfg.get("PB_SUPERUSER_PASSWORD") or "vibeshift-local-admin"
+    email = cfg.get("PB_SUPERUSER_EMAIL") or "admin@example.com"
+    password = cfg.get("PB_SUPERUSER_PASSWORD") or "12345678"
     subprocess.run(
         [str(ROOT / "operations/tools/pocketbase/pocketbase"), "superuser", "upsert",
          email, password, "--dir=operations/data/pocketbase", "--migrationsDir=pb_migrations"],
