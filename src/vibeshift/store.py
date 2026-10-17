@@ -181,13 +181,20 @@ class Store:
             "messages", 'score_status="pending" && deleted_at=""', "-priority_key", per_page=n)
         return [StoredMessage.from_record(r) for r in items]
 
+    async def get_message(self, message_id: str) -> StoredMessage | None:
+        rec = await self._message(message_id)
+        return StoredMessage.from_record(rec) if rec else None
+
     async def save_score(self, message_id: str, emotion: str, probabilities: dict,
-                         confidence: float, model_id: str) -> None:
+                         confidence: float, model_id: str,
+                         rollup_applied: bool | None = None) -> None:
         rec = await self._message(message_id)
         if rec:
-            await self._patch("messages", rec["id"], {
-                "emotion": emotion, "probabilities": probabilities, "confidence": confidence,
-                "model_id": model_id, "score_status": "scored"})
+            body = {"emotion": emotion, "probabilities": probabilities, "confidence": confidence,
+                    "model_id": model_id, "score_status": "scored"}
+            if rollup_applied is not None:
+                body["rollup_applied"] = rollup_applied
+            await self._patch("messages", rec["id"], body)
 
     async def mark_failed(self, message_id: str) -> None:
         rec = await self._message(message_id)
