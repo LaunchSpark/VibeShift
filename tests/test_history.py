@@ -1,0 +1,206 @@
+import types
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
+
+import discord
+import pytest
+
+from vibeshift.history import create_downtime_jobs, job_loop, run_job, to_new_message
+from vibeshift.store import Store
+
+TZ = ZoneInfo("UTC")
+T0 = datetime(2026, 10, 17, 12, 0, tzinfo=timezone.utc)
+
+
+def ts(i: int) -> datetime:
+    return T0 + timedelta(minutes=i)
+
+
+class FakeAuthor:
+    def __init__(self, id=1, bot=False):
+        self.id, self.bot = id, bot
+        self.display_name = f"user{id}"
+        self.display_avatar = types.SimpleNamespace(url=f"http://a/{id}.png")
+
+
+def fm(i, content=None, author=None, reply=None, channel_id=7, created=None):
+    return types.SimpleNamespace(
+        id=i, content=f"m{i}" if content is None else content,
+        author=author or FakeAuthor(), created_at=created or ts(i),
+        guild=types.SimpleNamespace(id=5), channel=types.SimpleNamespace(id=channel_id),
+        reference=types.SimpleNamespace(message_id=reply) if reply else None)
+
+
+class FakeChannel:
+    type = discord.ChannelType.text
+
+    def __init__(self, id, name, msgs, forbidden=False):
+        self.id, self.name, self.msgs, self.forbidden = id, name, msgs, forbidden
+        self.calls = []
+
+    async def history(self, limit=100, before=None, after=None, oldest_first=None):
+        self.calls.append(dict(before=before, after=after, oldest_first=oldest_first))
+        if self.forbidden:
+            raise discord.Forbidden(types.SimpleNamespace(status=403, reason="Forbidden"), "missing access")
+
+        def ok(m, bound, gt):
+            if bound is None:
+                return True
+            v, mv = (bound.id, m.id) if hasattr(bound, "id") else (bound, m.created_at)
+            return mv > v if gt else mv < v
+        out = [m for m in self.msgs if ok(m, after, True) and ok(m, before, False)]
+        # discord.py defaults to oldest_first when `after` is given
+        asc = oldest_first if oldest_first is not None else after is not None
+        for m in sorted(out, key=lambda m: m.id, reverse=not asc):
+            yield m
+
+
+def guild(*channels):
+    return types.SimpleNamespace(id=5, name="G", icon=None, text_channels=list(channels))
+
+
+@pytest.fixture
+async def store(pb_url):
+    async with Store(pb_url) as s:
+        yield s
+
+
+async def job(store, origin, target=None):
+    await store.create_job("5", origin, target)
+    j = await store.next_pending_job()
+    return j
+
+
+async def final(store, j):
+    return await store._first("backfill_jobs", f'id="{j["id"]}"')
+
+
+async def all_ids(store):
+    r = await store._list("messages", sort="priority_key", per_page=100)
+    return [x["message_id"] for x in r]
+
+
+async def test_downtime_fetches_after_cursor_only(store):
+    await store.upsert_channel("7", "5", "gen", "text")
+    await store.set_cursors("7", newest="100", oldest="100")
+    ch = FakeChannel(7, "gen", [fm(90), fm(110), fm(120)])
+    j = await job(store, "downtime")
+    await run_job(j, guild(ch), store, TZ)
+    assert await all_ids(store) == ["110", "120"]
+    rec = await store.get_channel("7")
+    assert rec["newest_fetched_id"] == "120" and rec["oldest_fetched_id"] == "100"
+    assert (await final(store, j))["status"] == "done"
+    assert ch.calls[0]["oldest_first"] is True
+
+
+async def test_downtime_skips_channel_without_cursor(store):
+    ch = FakeChannel(7, "gen", [fm(110)])
+    j = await job(store, "downtime")
+    await run_job(j, guild(ch), store, TZ)
+    assert await all_ids(store) == []
+
+
+async def test_extend_stops_at_target_and_sets_depth(store):
+    await store.upsert_channel("7", "5", "gen", "text")
+    await store.set_cursors("7", newest="50", oldest="50")
+    ch = FakeChannel(7, "gen", [fm(10, created=ts(-100)), fm(20, created=ts(-5)),
+                                fm(30, created=ts(-4)), fm(60, created=ts(1))])
+    target = ts(-10)
+    j = await job(store, "extend", target)
+    await run_job(j, guild(ch), store, TZ)
+    assert await all_ids(store) == ["20", "30"]
+    rec = await store.get_channel("7")
+    assert rec["oldest_fetched_id"] == "20" and rec["newest_fetched_id"] == "50"
+    assert ch.calls[0]["oldest_first"] is False
+    assert ch.calls[0]["before"].id == 50
+    g = await store._first("guilds", 'guild_id="5"')
+    assert g["history_depth"].startswith(target.strftime("%Y-%m-%d %H:%M"))
+    assert (await final(store, j))["status"] == "done"
+
+
+async def test_extend_without_cursors_sets_both(store):
+    ch = FakeChannel(7, "gen", [fm(20, created=ts(-5)), fm(30, created=ts(-4))])
+    j = await job(store, "extend", ts(-10))
+    await run_job(j, guild(ch), store, TZ)
+    rec = await store.get_channel("7")
+    assert rec["newest_fetched_id"] == "30" and rec["oldest_fetched_id"] == "20"
+    assert ch.calls[0]["before"] is None
+
+
+async def test_forbidden_channel_skipped(store):
+    bad = FakeChannel(8, "locked", [], forbidden=True)
+    good = FakeChannel(7, "gen", [fm(20, created=ts(-5))])
+    j = await job(store, "extend", ts(-10))
+    await run_job(j, guild(bad, good), store, TZ)
+    f = await final(store, j)
+    assert f["status"] == "done" and "8" in f["error"]
+    assert await all_ids(store) == ["20"]
+
+
+async def test_failure_marks_failed(store):
+    class Boom(FakeChannel):
+        async def history(self, **kw):
+            raise RuntimeError("kaput")
+            yield
+    j = await job(store, "extend", ts(-10))
+    await run_job(j, guild(Boom(7, "gen", [])), store, TZ)
+    f = await final(store, j)
+    assert f["status"] == "failed" and "kaput" in f["error"]
+
+
+async def test_bot_and_empty_messages_ignored(store):
+    ch = FakeChannel(7, "gen", [fm(1, author=FakeAuthor(2, bot=True)), fm(2, content="  \n"),
+                                fm(3, content=""), fm(4)])
+    j = await job(store, "extend", ts(-10) - timedelta(days=1))
+    await run_job(j, guild(ch), store, TZ)
+    assert await all_ids(store) == ["4"]
+
+
+async def test_members_upserted_and_scanned(store):
+    msgs = [fm(i, author=FakeAuthor(1 + i % 2), created=ts(-50) + timedelta(seconds=i))
+            for i in range(1, 251)]
+    ch = FakeChannel(7, "gen", msgs)
+    j = await job(store, "extend", ts(-100))
+    await run_job(j, guild(ch), store, TZ)
+    ms = await store._list("members", per_page=10)
+    assert {m["author_id"] for m in ms} == {"1", "2"}
+    assert ms[0]["display_name"].startswith("user") and ms[0]["avatar_url"].startswith("http")
+    assert (await final(store, j))["scanned"] == 250
+
+
+def test_to_new_message_fields():
+    m = fm(42, reply=41)
+    n = to_new_message(m, ZoneInfo("America/New_York"))
+    assert (n.message_id, n.channel_id, n.guild_id, n.author_id) == ("42", "7", "5", "1")
+    assert n.reply_to_id == "41" and n.created_at.tzinfo is not None
+    assert n.day == ts(42).astimezone(ZoneInfo("America/New_York")).date().isoformat()
+    assert to_new_message(fm(1), TZ).reply_to_id == ""
+    naive = fm(1, created=datetime(2026, 1, 1))
+    assert to_new_message(naive, TZ).created_at.tzinfo is not None
+
+
+async def test_create_downtime_jobs(store):
+    await store.upsert_channel("7", "5", "gen", "text")
+    await store.set_cursors("7", newest="100")
+    await store.upsert_channel("9", "6", "x", "text")  # guild 6 has no cursor
+    g1 = guild(FakeChannel(7, "gen", []))
+    g2 = types.SimpleNamespace(id=6, name="H", icon=None, text_channels=[FakeChannel(9, "x", [])])
+    await create_downtime_jobs(types.SimpleNamespace(guilds=[g1, g2]), store)
+    jobs = await store._list("backfill_jobs", per_page=10)
+    assert [(j["guild_id"], j["origin"]) for j in jobs] == [("5", "downtime")]
+
+
+async def test_job_loop_runs_pending_job(store):
+    import asyncio
+    await store.upsert_channel("7", "5", "gen", "text")
+    await store.set_cursors("7", newest="100")
+    ch = FakeChannel(7, "gen", [fm(110)])
+    await store.create_job("5", "downtime")
+    bot = types.SimpleNamespace(get_guild=lambda gid: guild(ch) if gid == 5 else None)
+    t = asyncio.create_task(job_loop(bot, store, TZ, 0.05))
+    for _ in range(100):
+        await asyncio.sleep(0.1)
+        if await store.next_pending_job() is None and "110" in await all_ids(store):
+            break
+    t.cancel()
+    assert await all_ids(store) == ["110"]

@@ -127,6 +127,11 @@ class Store:
         await self._upsert("guilds", f"guild_id={_q(guild_id)}",
                            {"guild_id": guild_id, "name": name, "icon_url": icon_url or ""})
 
+    async def set_history_depth(self, guild_id: str, depth: datetime) -> None:
+        rec = await self._first("guilds", f"guild_id={_q(guild_id)}")
+        if rec:
+            await self._patch("guilds", rec["id"], {"history_depth": _to_pb(depth)})
+
     async def upsert_channel(self, channel_id: str, guild_id: str, name: str, type: str) -> None:
         await self._upsert("channels", f"channel_id={_q(channel_id)}",
                            {"channel_id": channel_id, "guild_id": guild_id, "name": name, "type": type})
