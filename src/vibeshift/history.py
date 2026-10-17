@@ -12,6 +12,7 @@ from vibeshift.store import NewMessage, Store, _from_pb, _snow_gt
 log = logging.getLogger(__name__)
 
 SCAN_EVERY = 100
+GONE_CHECKS = 3  # consecutive "guild gone" checks before a job is failed permanently
 
 
 def to_new_message(m: discord.Message, tz: ZoneInfo) -> NewMessage | None:
@@ -121,10 +122,15 @@ async def job_loop(bot, store: Store, tz: ZoneInfo, poll_seconds: float,
             log.exception("resetting running jobs failed; retrying in %.1fs", delay)
             await asyncio.sleep(delay)
             delay = min(delay * 2, 60)
-    fails: dict[str, int] = {}  # consecutive downtime failures per guild
-    misses: dict[str, int] = {}  # consecutive checks where the guild was unavailable
+    fails: dict[str, int] = {}  # consecutive downtime run failures per guild (backoff only)
+    misses: dict[str, int] = {}  # consecutive checks where the guild was missing (backoff only)
+    gone: dict[str, int] = {}  # consecutive "gone" checks: ready and guild absent from bot.guilds
     not_before: dict[str, float] = {}  # guild id -> loop time before which it is in backoff
     loop = asyncio.get_running_loop()
+
+    def backoff(gid: str, n: int) -> None:
+        not_before[gid] = loop.time() + min(poll_seconds * 2 ** min(n, 32), 300)
+
     while True:
         try:
             now = loop.time()
@@ -136,22 +142,25 @@ async def job_loop(bot, store: Store, tz: ZoneInfo, poll_seconds: float,
                 guild = bot.get_guild(int(gid))
                 if guild is None or getattr(guild, "unavailable", False):
                     # Possibly transient (reconnect, outage): retry with backoff, keep the flag.
-                    misses[gid] = misses.get(gid, 0) + 1
-                    gone = (guild is None and bot.is_ready()
-                            and int(gid) not in {g.id for g in bot.guilds})
-                    if gone and misses[gid] >= 3:
+                    # Only GONE_CHECKS consecutive "gone" checks fail the job; any other miss
+                    # (not ready, unavailable, still listed in bot.guilds) restarts that count.
+                    is_gone = (guild is None and bot.is_ready()
+                               and int(gid) not in {g.id for g in bot.guilds})
+                    gone[gid] = gone.get(gid, 0) + 1 if is_gone else 0
+                    if gone[gid] >= GONE_CHECKS:
                         await store.update_job(job["id"], status="failed",
                                                error="bot is not in this guild")
+                        gone.pop(gid, None)
                         misses.pop(gid, None)
                         if downtime:
                             fails.pop(gid, None)
                             if outstanding_downtime is not None:
                                 outstanding_downtime.discard(gid)
                     else:
-                        if not gone:
-                            misses[gid] = min(misses[gid], 2)  # only "gone while ready" counts to 3
-                        not_before[gid] = loop.time() + min(poll_seconds * 2 ** misses[gid], 300)
+                        misses[gid] = misses.get(gid, 0) + 1
+                        backoff(gid, misses[gid])
                     continue
+                gone.pop(gid, None)
                 misses.pop(gid, None)
                 status = await run_job(job, guild, store, tz)
                 if downtime:
@@ -164,7 +173,7 @@ async def job_loop(bot, store: Store, tz: ZoneInfo, poll_seconds: float,
                         # this guild only, so other guilds' and extend jobs keep running.
                         await store.update_job(job["id"], status="pending")
                         fails[gid] = fails.get(gid, 0) + 1
-                        not_before[gid] = loop.time() + min(poll_seconds * 2 ** fails[gid], 300)
+                        backoff(gid, fails[gid])
                 continue
         except asyncio.CancelledError:
             raise

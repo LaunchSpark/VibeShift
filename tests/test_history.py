@@ -404,3 +404,85 @@ async def test_transient_missing_guild_keeps_job_and_flag(pb_url):
             task.cancel()
             rec = (await store._list("backfill_jobs", f'id="{jid}"'))[0]
             assert rec["status"] == "pending" and out == {"99"}
+
+
+class ScriptBot:
+    """Bot whose guild state advances on each get_guild call (one job_loop check each).
+    States: "not_ready", "gone" (ready, guild absent), "found". After the script: not_ready."""
+
+    def __init__(self, gid, script, guild=None):
+        self.gid, self.script, self.guild, self.calls, self.state = gid, list(script), guild, 0, None
+
+    def get_guild(self, i):
+        self.state = self.script[self.calls] if self.calls < len(self.script) else "not_ready"
+        self.calls += 1
+        return self.guild if self.state == "found" else None
+
+    def is_ready(self):
+        return self.state != "not_ready"
+
+    @property
+    def guilds(self):
+        return [self.guild] if self.state == "found" else []
+
+
+async def _run_script(store, bot, jid, out, done):
+    import asyncio
+    task = asyncio.create_task(job_loop(bot, store, TZ, 0.001, out))
+    for _ in range(300):
+        await asyncio.sleep(0.01)
+        if await done():
+            break
+    await asyncio.sleep(0.05)
+    task.cancel()
+    return (await store._list("backfill_jobs", f'id="{jid}"'))[0]
+
+
+@pytest.mark.parametrize("script", [
+    ["not_ready"] * 5 + ["gone"],
+    ["gone", "gone", "not_ready", "gone"],
+])
+async def test_gone_needs_consecutive_checks(pb_url, script):
+    async with Store(pb_url) as store:
+        jid = await store.create_job("99", "downtime")
+        bot, out = ScriptBot(99, script), {"99"}
+
+        async def done():
+            return bot.calls > len(script)  # script consumed and the last check handled
+        rec = await _run_script(store, bot, jid, out, done)
+        assert bot.calls > len(script)
+        assert rec["status"] == "pending" and out == {"99"}
+
+
+async def test_three_consecutive_gone_fails_and_drops_flag(pb_url):
+    async with Store(pb_url) as store:
+        jid = await store.create_job("99", "downtime")
+        bot, out = ScriptBot(99, ["not_ready"] * 4 + ["gone"] * 3), {"99"}
+
+        async def done():
+            return (await store._list("backfill_jobs", f'id="{jid}"'))[0]["status"] == "failed"
+        rec = await _run_script(store, bot, jid, out, done)
+        assert rec["status"] == "failed" and rec["error"] == "bot is not in this guild"
+        assert out == set() and bot.calls == 7
+
+
+async def test_gone_count_resets_when_guild_found(pb_url):
+    async with Store(pb_url) as store:
+        await store.upsert_channel("7", "99", "gen", "text")
+        await store.set_cursors("7", newest="10", oldest="10")
+
+        async def boom(*a, **k):
+            raise RuntimeError("discord down")
+            yield
+        ch = FakeChannel(7, "gen", [])
+        ch.history = boom  # found guild's run fails, so the job is requeued, not finished
+        guild = types.SimpleNamespace(id=99, name="g", icon=None, text_channels=[ch])
+        jid = await store.create_job("99", "downtime")
+        script = ["gone", "gone", "found", "gone", "gone"]
+        bot, out = ScriptBot(99, script, guild), {"99"}
+
+        async def done():
+            return bot.calls > len(script)
+        rec = await _run_script(store, bot, jid, out, done)
+        assert bot.calls > len(script)
+        assert rec["status"] == "pending" and out == {"99"}
