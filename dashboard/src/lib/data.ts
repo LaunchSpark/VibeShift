@@ -73,6 +73,15 @@ export async function fetchRollups(p: RollupParams): Promise<Rollup[]> {
   return rows.map((r) => ({ day: r.day, count: r.count, prob_sums: r.prob_sums ?? {} }))
 }
 
+export const earliestRollupQuery = (guild: string) =>
+  ({ filter: guildFilter(guild), sort: 'day', fields: 'day', skipTotal: true }) as const
+
+/** Day of the guild's oldest rollup, or null when it has none yet. */
+export async function fetchEarliestRollupDay(guild: string): Promise<string | null> {
+  const res = await pb.collection('daily_rollups').getList(1, 1, earliestRollupQuery(guild))
+  return toDay(res.items[0]?.day)
+}
+
 export async function fetchPendingCount(guild: string): Promise<number> {
   const res = await pb
     .collection('messages')

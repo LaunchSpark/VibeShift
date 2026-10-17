@@ -5,9 +5,9 @@ import { EmotionChartCard, EmotionChartCardSkeleton } from '@/components/emotion
 import { EmotionStatCards, EmotionStatCardsSkeleton } from '@/components/emotion-stat-cards'
 import { FiltersPanel } from '@/components/filters-panel'
 import { useFetched } from '@/hooks/use-fetched'
-import { fetchChannels, fetchMembers, fetchPendingCount, fetchRollups } from '@/lib/data'
+import { fetchChannels, fetchEarliestRollupDay, fetchGuild, fetchMembers, fetchPendingCount, fetchRollups } from '@/lib/data'
 import { LABELS, type Label } from '@/lib/emotions'
-import { resolveRange, useFilters } from '@/lib/filters'
+import { earliestDay, resolveRange, useFilters } from '@/lib/filters'
 import { buildSeries, shiftDay, topEmotions } from '@/lib/series'
 
 const DAY_MS = 86_400_000
@@ -26,14 +26,21 @@ function EmotionsView({ gid, historyDepth }: { gid: string; historyDepth: string
   const channelsKey = filters.channels.join(',')
 
   const today = todayUtc()
-  const { from, to } = resolveRange(filters, today, historyDepth)
+  // "All time" starts at the oldest data we have: the extended depth (fresh, not the
+  // page-load value) or, for a guild never extended, its oldest rollup day.
+  const bounds = useFetched(gid, async () => {
+    const [g, first] = await Promise.all([fetchGuild(gid), fetchEarliestRollupDay(gid)])
+    return earliestDay(g.history_depth, first)
+  })
+  const waiting = filters.range === 'all' && bounds.loading
+  const { from, to } = resolveRange(filters, today, bounds.data ?? historyDepth)
   const days = Math.round((Date.parse(to) - Date.parse(from)) / DAY_MS) + 1
 
   const channels = useFetched(gid, () => fetchChannels(gid))
   const members = useFetched(gid, () => fetchMembers(gid))
   const pending = useFetched(gid, () => fetchPendingCount(gid))
-  const rollups = useFetched(`${gid}|${from}|${to}|${ma}|${peopleKey}|${channelsKey}`, () =>
-    fetchRollups({
+  const rollups = useFetched(`${gid}|${waiting}|${from}|${to}|${ma}|${peopleKey}|${channelsKey}`, () =>
+    waiting ? Promise.resolve(null) : fetchRollups({
       guild: gid,
       from: shiftDay(from, -(ma - 1)),
       to,
@@ -41,7 +48,7 @@ function EmotionsView({ gid, historyDepth }: { gid: string; historyDepth: string
       people: peopleKey ? peopleKey.split(',') : [],
     }),
   )
-  const rows = rollups.data
+  const rows = waiting ? null : rollups.data
 
   const series = useMemo(() => (rows ? buildSeries(rows, from, to, ma) : []), [rows, from, to, ma])
   // Rank over the visible window only, not the moving-average lookback padding.
@@ -67,6 +74,7 @@ function EmotionsView({ gid, historyDepth }: { gid: string; historyDepth: string
         today={today}
       />
       {rollups.error && <ErrorAlert title="Could not load emotion data" message={rollups.error} />}
+      {bounds.error && <ErrorAlert title="Could not load history range" message={bounds.error} />}
       {channels.error && <ErrorAlert title="Could not load channels" message={channels.error} />}
       {members.error && <ErrorAlert title="Could not load people" message={members.error} />}
       {pending.error && <ErrorAlert title="Could not load pending count" message={pending.error} />}

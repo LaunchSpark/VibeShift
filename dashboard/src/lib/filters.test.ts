@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseFilters, resolveRange, toSearch, type Filters } from './filters'
+import { earliestDay, parseFilters, resolveRange, toSearch, type Filters } from './filters'
 
 const q = (s: string) => new URLSearchParams(s)
 
@@ -56,5 +56,17 @@ describe('filters', () => {
     expect(resolveRange(c, '2026-03-31', null)).toEqual({ from: '2026-03-20', to: '2026-03-31' })
     const allFuture = parseFilters(q('range=custom&from=2026-05-01&to=2026-05-10'))
     expect(resolveRange(allFuture, '2026-03-31', null)).toEqual({ from: '2026-03-31', to: '2026-03-31' })
+  })
+
+  it('earliestDay takes the oldest known bound', () => {
+    expect(earliestDay(null, '2026-02-01')).toBe('2026-02-01') // never extended: rollups only
+    expect(earliestDay('2026-01-05', '2026-02-01')).toBe('2026-01-05')
+    expect(earliestDay('2026-03-01', '2026-02-01')).toBe('2026-02-01')
+    expect(earliestDay(null, undefined)).toBeNull()
+  })
+
+  it('"all" starts at the earliest rollup for a never-extended guild', () => {
+    const all = parseFilters(q('range=all'))
+    expect(resolveRange(all, '2026-03-31', earliestDay(null, '2026-02-01')).from).toBe('2026-02-01')
   })
 })

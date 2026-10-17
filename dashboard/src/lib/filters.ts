@@ -64,6 +64,12 @@ export function toSearch(f: Filters): URLSearchParams {
   return q
 }
 
+/** The earliest of the known history bounds (YYYY-MM-DD strings), ignoring missing ones. */
+export function earliestDay(...days: (string | null | undefined)[]): string | null {
+  const known = days.filter((d): d is string => !!d)
+  return known.length ? known.reduce((a, b) => (b < a ? b : a)) : null
+}
+
 export function resolveRange(
   f: Filters,
   today: string,

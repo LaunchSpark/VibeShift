@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { guildFilter, mapGuild, rollupFilter } from './data'
+import { earliestRollupQuery, guildFilter, mapGuild, rollupFilter } from './data'
 
 const base = { guild: '100', from: '2026-01-01', to: '2026-01-31', channels: [], people: [] }
 
@@ -28,5 +28,11 @@ describe('mapGuild / guildFilter', () => {
   })
   it('escapes the guild id in the filter', () => {
     expect(guildFilter('a"b')).toBe('guild_id = "a\\"b"')
+  })
+})
+
+describe('earliestRollupQuery', () => {
+  it('asks for the single oldest day of the guild', () => {
+    expect(earliestRollupQuery('a"b')).toEqual({ filter: 'guild_id = "a\\"b"', sort: 'day', fields: 'day', skipTotal: true })
   })
 })
