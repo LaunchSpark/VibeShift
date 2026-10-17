@@ -30,13 +30,18 @@ def pb_binary() -> Path:
 @pytest.fixture
 def pb_url(pb_binary, tmp_path) -> str:
     port = _free_port()
+    data_dir = f"--dir={tmp_path / 'pb_data'}"
+    migrations = f"--migrationsDir={ROOT / 'pb_migrations'}"
+    # A superuser must exist before serve, otherwise PocketBase opens the installer in a browser.
+    subprocess.run(
+        [str(pb_binary), "superuser", "upsert", "test@vibeshift.local", "test-password-123",
+         data_dir, migrations],
+        check=True, capture_output=True,
+    )
+    log = open(tmp_path / "pb.log", "wb")
     proc = subprocess.Popen(
-        [
-            str(pb_binary), "serve", f"--http=127.0.0.1:{port}",
-            f"--dir={tmp_path / 'pb_data'}",
-            f"--migrationsDir={ROOT / 'pb_migrations'}",
-        ],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        [str(pb_binary), "serve", f"--http=127.0.0.1:{port}", data_dir, migrations],
+        stdout=log, stderr=subprocess.STDOUT,
     )
     url = f"http://127.0.0.1:{port}"
     try:
@@ -54,3 +59,6 @@ def pb_url(pb_binary, tmp_path) -> str:
     finally:
         proc.kill()
         proc.wait()
+        log.close()
+        text = (tmp_path / "pb.log").read_text(errors="replace")
+        assert "Launch the URL" not in text, "PocketBase tried to open the installer"
