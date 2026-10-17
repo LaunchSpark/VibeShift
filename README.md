@@ -7,7 +7,7 @@ model.
 
 ## Setup
 
-Install [pixi](https://pixi.sh), then:
+Install [pixi](https://pixi.sh) (the installer puts it in `~/.pixi/bin`; add that to your `PATH`), then:
 
 ```bash
 pixi install

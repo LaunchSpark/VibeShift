@@ -39,7 +39,12 @@ markers = ["model: loads the real emotion model (slow)"]
 
 [tool.pixi.workspace]
 channels = ["conda-forge"]
-platforms = ["osx-64", "osx-arm64", "linux-64"]
+# macos = "12.0" lowers the assumed macOS floor so the env resolves on macOS 12.
+platforms = [
+  { name = "mac-intel", platform = "osx-64", macos = "12.0" },
+  { name = "mac-arm", platform = "osx-arm64", macos = "12.0" },
+  "linux-64",
+]
 
 # Heavy native packages come from conda-forge (torch 2.14 ships for osx-64).
 [tool.pixi.dependencies]
