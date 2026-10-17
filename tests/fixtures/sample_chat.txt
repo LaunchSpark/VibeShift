@@ -1,0 +1,14 @@
+[14:02] <PixelKnight> The new matchmaking system is absolute trash. I've been waiting 20 minutes for a lobby.
+[14:02] <SaltySpittoon> same here. dev team really dropped the ball on this patch smh.
+[14:03] <cozy_cat> Hey guys! I just logged in, is the server acting up again?
+[14:04] <SaltySpittoon> yeah, don't even bother queuing right now. it's completely broken.
+[14:05] <PixelKnight> i swear if I lose my ranked points because of a disconnect i'm uninstalling.
+[14:06] <cozy_cat> Oh no, that really sucks :( I was looking forward to playing today.
+[14:08] <TechWizard> If you guys verify your game files through Steam it actually fixes the queue bug! Just worked for me.
+[14:08] <SaltySpittoon> wait seriously? trying that now.
+[14:10] <cozy_cat> Wow, it worked! Thank you so much @TechWizard! You're a lifesaver! 💖
+[14:11] <PixelKnight> okay yeah that fixed it. still annoyed I had to do it manually but whatever. thanks man.
+[14:12] <TechWizard> No problem at all! Good luck in your matches everyone.
+[14:15] <GrieferDan> lol you guys actually care about ranked? touch grass.
+[14:16] <cozy_cat> Ignore him, let's just go play! Have a great weekend everyone!
+[14:18] <bot_alert> [SYSTEM] Server load is currently at 85%. Proceed with caution.

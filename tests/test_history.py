@@ -270,3 +270,43 @@ async def test_reset_running_jobs(store):
     assert await store.next_pending_job() is None
     await store.reset_running_jobs()
     assert (await store.next_pending_job())["id"] == j["id"]
+
+
+async def test_create_downtime_jobs_skips_active_and_tracks(pb_url):
+    async with Store(pb_url) as store:
+        await store.upsert_channel("7", "5", "gen", "text")
+        await store.set_cursors("7", newest="10", oldest="10")
+        guild = types.SimpleNamespace(id=5, text_channels=[types.SimpleNamespace(id=7)])
+        bot = types.SimpleNamespace(guilds=[guild])
+        out: set = set()
+        await create_downtime_jobs(bot, store, out)
+        await create_downtime_jobs(bot, store, out)
+        assert out == {"5"}
+        assert await store.has_active_job("5", "downtime")
+        first = await store.next_pending_job()
+        await store.update_job(first["id"], status="done")
+        assert not await store.has_active_job("5", "downtime")
+        assert await store.next_pending_job() is None  # only one job was ever created
+
+
+async def test_job_loop_retries_when_reset_fails():
+    import asyncio
+
+    class FlakyStore:
+        calls = 0
+
+        async def reset_running_jobs(self):
+            FlakyStore.calls += 1
+            if FlakyStore.calls < 3:
+                raise RuntimeError("pocketbase down")
+
+        async def next_pending_job(self):
+            return None
+
+    task = asyncio.create_task(job_loop(types.SimpleNamespace(), FlakyStore(), TZ, 0.01))
+    for _ in range(100):
+        if FlakyStore.calls >= 3:
+            break
+        await asyncio.sleep(0.02)
+    task.cancel()
+    assert FlakyStore.calls >= 3

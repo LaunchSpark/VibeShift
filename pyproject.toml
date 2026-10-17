@@ -69,6 +69,7 @@ default = { features = ["test"] }
 test = "pytest -m 'not model'"
 test-model = "pytest -m model"
 bot = "vibeshift-bot"
+dev = "python scripts/dev.py"
 notebook = "marimo edit notebooks/emotion_tracker.py"
 pb-install = "python scripts/install_pocketbase.py 0.40.5"
 pb-superuser = { cmd = "python scripts/pb_superuser.py", depends-on = ["pb-install"] }

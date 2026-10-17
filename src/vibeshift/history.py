@@ -104,17 +104,34 @@ async def run_job(job: dict, guild: discord.Guild, store: Store, tz: ZoneInfo) -
                                error="; ".join(notes + [f"{type(e).__name__}: {e}"]))
 
 
-async def job_loop(bot, store: Store, tz: ZoneInfo, poll_seconds: float) -> None:
-    await store.reset_running_jobs()  # resume jobs interrupted by a crash
+async def job_loop(bot, store: Store, tz: ZoneInfo, poll_seconds: float,
+                   outstanding_downtime: set[str] | None = None) -> None:
+    """Run pending jobs forever. `outstanding_downtime` holds guild ids whose downtime job
+    is pending/running; a guild is dropped once its job ends (done, failed, or unrunnable)."""
+    delay = poll_seconds
+    while True:  # resume jobs interrupted by a crash; retry while PocketBase is down
+        try:
+            await store.reset_running_jobs()
+            break
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            log.exception("resetting running jobs failed; retrying in %.1fs", delay)
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, 60)
     while True:
         try:
             job = await store.next_pending_job()
             if job:
                 guild = bot.get_guild(int(job["guild_id"]))
-                if guild is None:
-                    await store.update_job(job["id"], status="failed", error="guild not available")
-                else:
-                    await run_job(job, guild, store, tz)
+                try:
+                    if guild is None:
+                        await store.update_job(job["id"], status="failed", error="guild not available")
+                    else:
+                        await run_job(job, guild, store, tz)
+                finally:
+                    if outstanding_downtime is not None and job["origin"] == "downtime":
+                        outstanding_downtime.discard(job["guild_id"])
                 continue
         except asyncio.CancelledError:
             raise
@@ -123,10 +140,20 @@ async def job_loop(bot, store: Store, tz: ZoneInfo, poll_seconds: float) -> None
         await asyncio.sleep(poll_seconds)
 
 
-async def create_downtime_jobs(bot, store: Store) -> None:
+async def create_downtime_jobs(bot, store: Store,
+                               outstanding: set[str] | None = None) -> None:
+    """One downtime job per guild with captured history, unless one is already queued/running.
+    Guilds with such a job are added to `outstanding` (live capture then leaves cursors alone)."""
     for g in bot.guilds:
+        gid = str(g.id)
+        if await store.has_active_job(gid, "downtime"):
+            if outstanding is not None:
+                outstanding.add(gid)
+            continue
         for ch in g.text_channels:
             rec = await store.get_channel(str(ch.id))
             if rec and rec.get("newest_fetched_id"):
-                await store.create_job(str(g.id), "downtime")
+                await store.create_job(gid, "downtime")
+                if outstanding is not None:
+                    outstanding.add(gid)
                 break

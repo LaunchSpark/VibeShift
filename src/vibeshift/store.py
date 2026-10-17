@@ -262,6 +262,10 @@ class Store:
         for r in await self._list("backfill_jobs", 'status="running"', "created", per_page=200):
             await self._patch("backfill_jobs", r["id"], {"status": "pending"})
 
+    async def has_active_job(self, guild_id: str, origin: str) -> bool:
+        flt = f'guild_id={_q(guild_id)} && origin={_q(origin)} && (status="pending" || status="running")'
+        return bool(await self._list("backfill_jobs", flt))
+
     async def update_job(self, id: str, **fields: Any) -> None:
         for k, v in fields.items():
             if isinstance(v, datetime):
