@@ -184,3 +184,19 @@ async def test_save_failure_isolated_and_not_double_counted(store):
     assert (await store.get_message("3")).score_status == "scored"
     assert await sc.run_once() == 0
     assert (await rollup(store))[0] == 2
+
+
+async def test_cancel_during_save_rolls_back_rollup(store):
+    await store.insert_pending(msg(1))
+    sc = Scorer(store, fake(), 10, TZ)
+    popped = (await store.pop_chunk(1))[0]
+
+    async def save(*a, **k):
+        raise asyncio.CancelledError  # bot shutdown between put_rollup and save_score
+
+    store.save_score = save
+    with pytest.raises(asyncio.CancelledError):
+        await sc._commit(popped, fake()(["x"])[0])
+    r = await rollup(store)
+    assert r is None or r[0] == 0  # not left counted while the row is still pending
+    assert (await store.get_message("1")).score_status == "pending"

@@ -486,3 +486,51 @@ async def test_gone_count_resets_when_guild_found(pb_url):
         rec = await _run_script(store, bot, jid, out, done)
         assert bot.calls > len(script)
         assert rec["status"] == "pending" and out == {"99"}
+
+
+async def test_running_job_does_not_cover_a_new_gap(store):
+    await store.upsert_channel("7", "5", "gen", "text")
+    await store.set_cursors("7", newest="10", oldest="10")
+    await store.create_job("5", "downtime")
+    j = await store.next_pending_job()
+    await store.update_job(j["id"], status="running")  # may be past some channels already
+    out: set = set()
+    await create_downtime_jobs(types.SimpleNamespace(guilds=[guild(FakeChannel(7, "gen", []))]),
+                               store, out)
+    assert out == {"5"}
+    assert await store.next_pending_job() is not None  # a fresh job was queued
+
+
+async def test_job_loop_keeps_flag_while_another_downtime_job_is_queued(pb_url):
+    import asyncio
+    async with Store(pb_url) as store:
+        await store.upsert_channel("7", "5", "gen", "text")
+        await store.set_cursors("7", newest="10", oldest="10")
+        out: set = {"5"}
+        seen = []
+        ch = FakeChannel(7, "gen", [])
+        real = ch.history
+
+        def history(**kw):
+            if not seen:  # first job: a new gap opens meanwhile and queues a second job
+                seen.append(None)
+
+                async def gen():
+                    await store.create_job("5", "downtime")
+                    async for m in real(**kw):
+                        yield m
+                return gen()
+            seen.append("5" in out)  # second job runs: the flag must still be held
+            return real(**kw)
+        ch.history = history
+        g = guild(ch)
+        bot = types.SimpleNamespace(guilds=[g], get_guild=lambda i: g)
+        await store.create_job("5", "downtime")
+        task = asyncio.create_task(job_loop(bot, store, TZ, 0.01, out))
+        for _ in range(200):
+            await asyncio.sleep(0.02)
+            if len(seen) == 2 and not out:
+                break
+        task.cancel()
+        assert seen == [None, True]
+        assert out == set()

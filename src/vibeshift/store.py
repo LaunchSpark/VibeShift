@@ -165,16 +165,19 @@ class Store:
         r.raise_for_status()
         return True
 
-    async def mark_edited(self, message_id: str, content: str, edited_at: datetime) -> None:
+    async def mark_edited(self, message_id: str, content: str, edited_at: datetime) -> bool:
+        """False (and no write) for unknown messages and unchanged content: Discord sends
+        MESSAGE_UPDATE with the same content for link-embed unfurls."""
         rec = await self._message(message_id)
-        if not rec:
-            return
+        if not rec or (rec.get("content") or "") == content:
+            return False
         # probabilities / rollup_applied are deliberately untouched: the scorer
         # subtracts the old contribution before applying the new one.
         await self._patch("messages", rec["id"], {
             "content": content, "edited_at": _to_pb(edited_at),
             "priority_key": edit_priority_key(edited_at), "score_status": "pending",
         })
+        return True
 
     async def mark_deleted(self, message_id: str, deleted_at: datetime) -> StoredMessage | None:
         rec = await self._message(message_id)
@@ -263,8 +266,10 @@ class Store:
         for r in await self._list("backfill_jobs", 'status="running"', "created", per_page=200):
             await self._patch("backfill_jobs", r["id"], {"status": "pending"})
 
-    async def has_active_job(self, guild_id: str, origin: str) -> bool:
-        flt = f'guild_id={_q(guild_id)} && origin={_q(origin)} && (status="pending" || status="running")'
+    async def has_active_job(self, guild_id: str, origin: str,
+                             statuses: tuple[str, ...] = ("pending", "running")) -> bool:
+        st = " || ".join(f"status={_q(s)}" for s in statuses)
+        flt = f"guild_id={_q(guild_id)} && origin={_q(origin)} && ({st})"
         return bool(await self._list("backfill_jobs", flt))
 
     async def update_job(self, id: str, **fields: Any) -> None:

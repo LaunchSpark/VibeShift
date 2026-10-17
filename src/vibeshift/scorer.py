@@ -75,8 +75,9 @@ class Scorer:
                 await self.store.save_score(
                     fresh.message_id, score.emotion, score.probabilities, score.confidence,
                     MODEL_ID, rollup_applied=True)
-            except Exception:
-                # keep rollup and row consistent: undo the rollup write
+            except BaseException:
+                # Keep rollup and row consistent: undo the rollup write. BaseException so a
+                # cancellation (shutdown) between the two writes can't leave a double count.
                 try:
                     b_count, b_sums = before if before else (0, {k: 0.0 for k in sums})
                     await self.store.put_rollup(*args, b_count, b_sums)
@@ -92,8 +93,9 @@ class Scorer:
 
     async def on_edited(self, message_id: str, content: str, edited_at: datetime) -> None:
         async with self._lock:
-            await self.store.mark_edited(message_id, content, edited_at)
-        self.wake()
+            changed = await self.store.mark_edited(message_id, content, edited_at)
+        if changed:
+            self.wake()
 
     async def run_once(self) -> int:
         msgs = await self.store.pop_chunk(self.chunk)

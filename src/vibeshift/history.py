@@ -128,6 +128,17 @@ async def job_loop(bot, store: Store, tz: ZoneInfo, poll_seconds: float,
     not_before: dict[str, float] = {}  # guild id -> loop time before which it is in backoff
     loop = asyncio.get_running_loop()
 
+    async def release(gid: str) -> None:
+        # Another downtime job for this guild (queued after a later gap) keeps the flag.
+        if outstanding_downtime is None:
+            return
+        try:
+            if await store.has_active_job(gid, "downtime"):
+                return
+        except Exception:  # noqa: BLE001 - don't freeze the guild's cursors forever
+            log.exception("active-job check failed for guild %s; releasing flag", gid)
+        outstanding_downtime.discard(gid)
+
     def backoff(gid: str, n: int) -> None:
         not_before[gid] = loop.time() + min(poll_seconds * 2 ** min(n, 32), 300)
 
@@ -154,8 +165,7 @@ async def job_loop(bot, store: Store, tz: ZoneInfo, poll_seconds: float,
                         misses.pop(gid, None)
                         if downtime:
                             fails.pop(gid, None)
-                            if outstanding_downtime is not None:
-                                outstanding_downtime.discard(gid)
+                            await release(gid)
                     else:
                         misses[gid] = misses.get(gid, 0) + 1
                         backoff(gid, misses[gid])
@@ -166,8 +176,7 @@ async def job_loop(bot, store: Store, tz: ZoneInfo, poll_seconds: float,
                 if downtime:
                     if status == "done":
                         fails.pop(gid, None)
-                        if outstanding_downtime is not None:
-                            outstanding_downtime.discard(gid)  # only a finished job covers the gap
+                        await release(gid)  # only a finished job covers the gap
                     else:
                         # Retry forever (a gap is worse), keeping the recorded error; back off
                         # this guild only, so other guilds' and extend jobs keep running.
@@ -182,20 +191,25 @@ async def job_loop(bot, store: Store, tz: ZoneInfo, poll_seconds: float,
         await asyncio.sleep(poll_seconds)
 
 
-async def create_downtime_jobs(bot, store: Store,
-                               outstanding: set[str] | None = None) -> None:
-    """One downtime job per guild with captured history, unless one is already queued/running.
-    Guilds with such a job are added to `outstanding` (live capture then leaves cursors alone)."""
-    for g in bot.guilds:
+async def ensure_downtime_job(store: Store, gid: str, outstanding: set[str] | None = None) -> None:
+    """Queue a downtime job for `gid` unless one is still *pending*, and flag the guild.
+    A running job doesn't count: it may already be past some channels, so it can't be
+    relied on to cover a gap that opened after it started."""
+    if not await store.has_active_job(gid, "downtime", statuses=("pending",)):
+        await store.create_job(gid, "downtime")
+    if outstanding is not None:
+        outstanding.add(gid)
+
+
+async def create_downtime_jobs(bot, store: Store, outstanding: set[str] | None = None,
+                               guilds=None) -> None:
+    """One downtime job per guild with captured history (`guilds`, default bot.guilds),
+    unless one is already pending. Flagged guilds are added to `outstanding` (live capture
+    then leaves their cursors alone)."""
+    for g in list(bot.guilds if guilds is None else guilds):
         gid = str(g.id)
-        if await store.has_active_job(gid, "downtime"):
-            if outstanding is not None:
-                outstanding.add(gid)
-            continue
         for ch in g.text_channels:
             rec = await store.get_channel(str(ch.id))
             if rec and rec.get("newest_fetched_id"):
-                await store.create_job(gid, "downtime")
-                if outstanding is not None:
-                    outstanding.add(gid)
+                await ensure_downtime_job(store, gid, outstanding)
                 break
