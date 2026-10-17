@@ -29,15 +29,25 @@ export function rollupFilter(p: RollupParams): string {
   return parts.join(' && ')
 }
 
-export async function fetchGuilds(): Promise<Guild[]> {
-  const rows = await pb.collection('guilds').getFullList({ sort: 'name' })
-  return rows.map((r) => ({
+export function mapGuild(r: Record<string, any>): Guild {
+  return {
     id: r.id,
     guild_id: r.guild_id,
     name: r.name,
     icon_url: r.icon_url,
     history_depth: toDay(r.history_depth),
-  }))
+  }
+}
+
+export const guildFilter = (guild: string) => `guild_id = ${q(guild)}`
+
+export async function fetchGuilds(): Promise<Guild[]> {
+  const rows = await pb.collection('guilds').getFullList({ sort: 'name' })
+  return rows.map(mapGuild)
+}
+
+export async function fetchGuild(guild: string): Promise<Guild> {
+  return mapGuild(await pb.collection('guilds').getFirstListItem(guildFilter(guild)))
 }
 
 export async function fetchChannels(guild: string): Promise<Channel[]> {

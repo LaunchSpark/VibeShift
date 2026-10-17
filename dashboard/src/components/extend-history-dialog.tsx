@@ -92,7 +92,7 @@ export function ExtendHistoryDialog({
             mode="single"
             selected={target ? parseISO(target) : undefined}
             defaultMonth={parseISO(target ?? depth ?? today)}
-            disabled={[{ after: parseISO(today) }, ...(depth ? [{ after: parseISO(shiftDay(depth, -1)) }] : [])]}
+            disabled={[{ after: parseISO(shiftDay(depth ?? today, -1)) }]}
             onSelect={(_d, day) => setTarget(day.toLocaleDateString('en-CA'))}
           />
         </div>

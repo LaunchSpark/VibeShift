@@ -10,7 +10,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { selectFetched, type Fetched } from '@/hooks/use-fetched'
-import { fetchJobs, fetchPendingCount, type Job } from '@/lib/data'
+import { fetchGuild, fetchJobs, fetchPendingCount, type Job } from '@/lib/data'
 
 const POLL_MS = 5000
 const todayUtc = () => new Date().toISOString().slice(0, 10)
@@ -27,7 +27,10 @@ function usePolled<T>(key: string, fn: () => Promise<T>, ms: number): [Fetched<T
     const run = () =>
       fn().then(
         (data) => live && setRaw({ key, data, error: null }),
-        (e) => live && setRaw({ key, data: null, error: String(e?.message ?? e) }),
+        (e) =>
+          live &&
+          // Keep the last good data of this key; show the error alongside it.
+          setRaw((prev) => ({ key, data: prev?.key === key ? prev.data : null, error: String(e?.message ?? e) })),
       )
     run()
     const id = setInterval(run, ms)
@@ -44,12 +47,14 @@ function usePolled<T>(key: string, fn: () => Promise<T>, ms: number): [Fetched<T
 /** Remounted per guild so no jobs/counts leak between guilds. */
 export default function BackfillPage() {
   const { guild } = useShell()
-  return <BackfillView key={guild!.guild_id} gid={guild!.guild_id} depth={guild!.history_depth} />
+  return <BackfillView key={guild!.guild_id} gid={guild!.guild_id} initialDepth={guild!.history_depth} />
 }
 
-function BackfillView({ gid, depth }: { gid: string; depth: string | null }) {
+function BackfillView({ gid, initialDepth }: { gid: string; initialDepth: string | null }) {
   const [jobs, reloadJobs] = usePolled(gid, () => fetchJobs(gid), POLL_MS)
   const [pending, reloadPending] = usePolled(gid, () => fetchPendingCount(gid), POLL_MS)
+  const [guild, reloadGuild] = usePolled(gid, () => fetchGuild(gid), POLL_MS)
+  const depth = guild.data ? guild.data.history_depth : initialDepth
   const today = todayUtc()
 
   return (
@@ -78,12 +83,14 @@ function BackfillView({ gid, depth }: { gid: string; depth: string | null }) {
               onCreated={() => {
                 reloadJobs()
                 reloadPending()
+                reloadGuild()
               }}
             />
           </CardAction>
         </CardHeader>
       </Card>
       {pending.error && <ErrorAlert title="Could not load pending count" message={pending.error} />}
+      {guild.error && <ErrorAlert title="Could not refresh history depth" message={guild.error} />}
       {jobs.error && <ErrorAlert title="Could not load jobs" message={jobs.error} />}
       {jobs.data === null ? (
         jobs.error ? null : <Skeleton className="h-48 w-full" />
@@ -130,7 +137,7 @@ function JobsTable({ jobs }: { jobs: Job[] }) {
                 <TableHead>Target</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="text-right">Scanned</TableHead>
-                <TableHead>Created</TableHead>
+                <TableHead>Created (UTC)</TableHead>
                 <TableHead>Error</TableHead>
               </TableRow>
             </TableHeader>
