@@ -136,4 +136,51 @@ async def test_wake_ends_idle_wait(store):
         if await rollup(store):
             break
     task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
     assert (await rollup(store))[0] == 1
+
+
+async def test_on_edited_mid_commit_leaves_pending(store):
+    await store.insert_pending(msg(1))
+    sc = Scorer(store, fake({"joy": 1.0}), 10, TZ)
+    real_put = store.put_rollup
+    tasks = []
+
+    async def put(*a, **k):
+        await real_put(*a, **k)
+        if not tasks:  # edit arrives between rollup write and save
+            tasks.append(asyncio.create_task(
+                sc.on_edited("1", "edited", datetime(2026, 10, 18, tzinfo=timezone.utc))))
+            await asyncio.sleep(0.2)
+
+    store.put_rollup = put
+    await sc.run_once()
+    await tasks[0]
+    store.put_rollup = real_put
+    m = await store.get_message("1")
+    assert m.score_status == "pending" and m.content == "edited"
+    await sc.run_once()  # re-score subtracts old contribution first
+    assert (await rollup(store))[0] == 1
+    assert (await store.get_message("1")).score_status == "scored"
+
+
+async def test_save_failure_isolated_and_not_double_counted(store):
+    for i in (1, 2, 3):
+        await store.insert_pending(msg(i))
+    real = store.save_score
+
+    async def save(message_id, *a, **k):
+        if message_id == "2":
+            raise RuntimeError("db down")
+        return await real(message_id, *a, **k)
+
+    store.save_score = save
+    sc = Scorer(store, fake(), 10, TZ)
+    assert await sc.run_once() == 3
+    assert (await rollup(store))[0] == 2
+    assert (await store.get_message("2")).score_status == "failed"
+    assert (await store.get_message("1")).score_status == "scored"
+    assert (await store.get_message("3")).score_status == "scored"
+    assert await sc.run_once() == 0
+    assert (await rollup(store))[0] == 2
