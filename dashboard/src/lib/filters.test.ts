@@ -16,13 +16,14 @@ describe('filters', () => {
   it('round trips', () => {
     const f: Filters = {
       guild: '111', range: 'custom', from: '2026-01-01', to: '2026-02-01', ma: 14,
-      people: ['1', '2'], channels: ['3'], emotions: ['love', 'anger'],
+      people: ['1', '2'], channels: ['3'], emotions: ['joy', 'anger'],
     }
     expect(parseFilters(toSearch(f))).toEqual(f)
   })
 
   it('invalid params fall back to defaults', () => {
-    const f = parseFilters(q('?ma=5&range=yesterday&people=&emo=joy'))
+    // `love` was a label before the 7-label schema; old links must not break the page.
+    const f = parseFilters(q('?ma=5&range=yesterday&people=&emo=love'))
     expect(f.ma).toBe(7)
     expect(f.range).toBe('30d')
     expect(f.people).toEqual([])

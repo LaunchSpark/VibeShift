@@ -32,11 +32,11 @@ describe('series', () => {
     expect(currentAndPeak(s, 'anger')).toEqual({ current: 20, peak: 80 })
   })
   it('topEmotions returns the 4 highest by mean', () => {
-    const rows = [r('2026-03-01', 2, { fear: 2, love: 1.5, neutral: 1, guilt: 0.8, anger: 0.1 })]
-    expect(topEmotions(rows, 4)).toEqual(['fear', 'love', 'neutral', 'guilt'])
+    const rows = [r('2026-03-01', 2, { fear: 2, joy: 1.5, neutral: 1, disgust: 0.8, anger: 0.1 })]
+    expect(topEmotions(rows, 4)).toEqual(['fear', 'joy', 'neutral', 'disgust'])
   })
   it('topEmotions breaks ties by canonical order', () => {
-    expect(topEmotions([], 2)).toEqual(['anger', 'sarcasm'])
+    expect(topEmotions([], 2)).toEqual(['joy', 'sadness'])
   })
   it('shiftDay crosses month boundaries', () => {
     expect(shiftDay('2026-03-01', -1)).toBe('2026-02-28')
