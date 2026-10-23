@@ -1,9 +1,10 @@
 # VibeShift
 Sentiment Analytics for Discord
 
-Classifies Discord messages into 13 emotions using the fine-tuned
+Classifies Discord messages into 7 emotions (joy, sadness, anger, fear, disgust, surprise,
+neutral) using the fine-tuned
 [LaunchSpark/laya-emotion-tracker](https://huggingface.co/LaunchSpark/laya-emotion-tracker)
-model.
+model (revision `v2-7-labels`, trained by `notebooks/finetune_laya_emotions.py`).
 
 ## Setup
 

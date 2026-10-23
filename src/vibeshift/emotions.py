@@ -10,7 +10,11 @@ from huggingface_hub import snapshot_download
 from tqdm.auto import tqdm
 
 MODEL_REPO = "LaunchSpark/laya-emotion-tracker"
-MODEL_ID = MODEL_REPO
+# The 7-label checkpoint (joy, sadness, anger, fear, disgust, surprise, neutral), fine-tuned
+# on GoEmotions by notebooks/finetune_laya_emotions.py. The 13-label one is "v1-13-labels".
+MODEL_REVISION = "v2-7-labels"
+# Stored on every scored message, so a message's scores can be traced to the checkpoint.
+MODEL_ID = f"{MODEL_REPO}@{MODEL_REVISION}"
 
 
 @cache
@@ -20,7 +24,7 @@ def load_model() -> tuple["laya.Agent", dict]:
     The question schema ships with the model as questions.json, so it always
     matches what the model was trained on.
     """
-    model_dir = snapshot_download(MODEL_REPO)
+    model_dir = snapshot_download(MODEL_REPO, revision=MODEL_REVISION)
     agent = laya.Agent(model_dir)
     questions = json.loads((Path(model_dir) / "questions.json").read_text())
     return agent, questions

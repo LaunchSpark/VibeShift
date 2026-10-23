@@ -6,7 +6,7 @@ pytestmark = pytest.mark.model
 
 
 def test_predicts_known_label():
-    assert len(emotion_labels()) == 13
+    assert emotion_labels() == ["joy", "sadness", "anger", "fear", "disgust", "surprise", "neutral"]
     assert predict_emotion("I cannot believe we actually won!") in emotion_labels()
 
 
@@ -16,7 +16,7 @@ def test_score_batch_shape():
     for s in scores:
         assert isinstance(s, Score)
         assert set(s.probabilities) == set(emotion_labels())
-        assert len(s.probabilities) == 13
+        assert len(s.probabilities) == 7
         assert abs(sum(s.probabilities.values()) - 1.0) < 0.02
         assert s.emotion == max(s.probabilities, key=s.probabilities.get)
         assert abs(s.confidence - s.probabilities[s.emotion]) < 1e-3
@@ -32,5 +32,5 @@ def test_sample_chat_scores():
     labels = set(emotion_labels())
     for m, s in zip(msgs, scores):
         print(f"{s.emotion:12s} {s.confidence:.2f} <{m.author.name}> {m.content[:60]}")
-        assert len(s.probabilities) == 13
+        assert len(s.probabilities) == 7
         assert s.emotion in labels
