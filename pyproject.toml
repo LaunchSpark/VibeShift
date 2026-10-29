@@ -31,7 +31,7 @@ vibeshift-bot = "vibeshift.bot:main"
 allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/vibeshift"]
+packages = ["src/vibeshift", "evaluation"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -53,6 +53,13 @@ pytorch = ">=2.9"
 transformers = "*"
 numpy = "*"
 nodejs = "24.*"
+# Evaluation project (evaluation/): metrics, stacking head, and Altair charts.
+# vl-convert-python exports Altair charts to PNG/SVG headlessly for eval-report.
+# (marimo itself is pinned under [project.dependencies].)
+scikit-learn = "*"
+altair = "*"
+vl-convert-python = "*"
+polars = "*"
 
 # Everything else from [project.dependencies] is resolved from PyPI by pixi.
 [tool.pixi.pypi-dependencies]
@@ -77,3 +84,17 @@ dash-test = "npm --prefix dashboard test -- --run"
 pb-install = "python scripts/install_pocketbase.py 0.40.5"
 pb-superuser = { cmd = "python scripts/pb_superuser.py", depends-on = ["pb-install"] }
 pb = { cmd = "operations/tools/pocketbase/pocketbase serve --http=127.0.0.1:8090 --dir=operations/data/pocketbase --migrationsDir=pb_migrations --origins=http://localhost:5173,http://127.0.0.1:5173", depends-on = ["pb-superuser"] }
+
+# Evaluation project (evaluation/). Each model task writes predictions/{model}.jsonl;
+# eval-report scores every prediction file. All run on the sample fixture until the
+# real dataset lands. See evaluation/README.md for the handoff map.
+eval-export = "python -m evaluation.curation.export_from_pb"          # A & B
+eval-kappa = "python -m evaluation.annotation.reliability"            # A & B
+eval-tau = "python -m evaluation.annotation.tau_sweep"                # A & B / Lucas
+eval-laya = "python -m evaluation.models.laya.run"                    # Lucas
+eval-transformers = "python -m evaluation.models.transformers.run"    # C
+eval-llm = "python -m evaluation.models.llm.run"                      # C
+eval-nrc = "python -m evaluation.models.nrc_lexicon.run"              # D
+eval-stack = "python -m evaluation.models.stacking.train"             # D
+eval-report = "python -m evaluation.eval.evaluate"                    # D
+eval-notebook = "marimo edit evaluation/eval/explore_eval.py"         # everyone
