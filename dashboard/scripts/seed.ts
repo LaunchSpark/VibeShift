@@ -37,7 +37,7 @@ const members = ['Ava', 'Ben', 'Cleo', 'Dev', 'Esme', 'Finn'].map((n, i) => ({
 
 // Per-emotion wave parameters: base weight, period (days), phase, amplitude.
 const emo = LABELS.map((label, i) => {
-  const dominant = ['happiness', 'neutral', 'love', 'sarcasm', 'surprise'].includes(label)
+  const dominant = ['joy', 'neutral', 'surprise'].includes(label)
   return {
     label,
     base: dominant ? 1.2 + rand() * 0.6 : 0.15 + rand() * 0.25,
