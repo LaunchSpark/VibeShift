@@ -1,4 +1,7 @@
-export const LABELS = ['joy', 'sadness', 'anger', 'fear', 'disgust', 'surprise', 'neutral'] as const
+/** The 7 emotion labels, in the evaluation schema's order (evaluation/common/labels.py). */
+export const LABELS = [
+  'joy', 'sadness', 'anger', 'fear', 'disgust', 'surprise', 'neutral',
+] as const
 
 export type Label = (typeof LABELS)[number]
 

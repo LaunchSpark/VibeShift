@@ -192,3 +192,10 @@ operations/data/
 # Dashboard
 dashboard/node_modules/
 dashboard/dist/
+
+# Evaluation project: generated outputs (regenerate with `pixi run eval-*`)
+evaluation/predictions/*.jsonl
+evaluation/eval/report/
+
+# marimo session caches (cell outputs saved next to each notebook)
+__marimo__/

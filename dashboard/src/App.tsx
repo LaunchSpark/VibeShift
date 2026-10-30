@@ -10,6 +10,7 @@ import { fetchGuilds, type Guild } from '@/lib/data'
 import type { ShellContext } from '@/lib/shell'
 import EmotionsPage from '@/pages/emotions'
 import BackfillPage from '@/pages/backfill'
+import LabelPage from '@/pages/label'
 
 function Layout() {
   const [filters] = useFilters()
@@ -61,6 +62,7 @@ export default function App() {
         <Route element={<Layout />}>
           <Route index element={<EmotionsPage />} />
           <Route path="backfill" element={<BackfillPage />} />
+          <Route path="label" element={<LabelPage />} />
         </Route>
       </Routes>
     </BrowserRouter>

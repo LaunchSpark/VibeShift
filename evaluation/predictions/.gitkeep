@@ -1,0 +1,2 @@
+# Model runners write {model_name}.jsonl here. Tracked so the dir exists; the
+# generated prediction files themselves are produced by `pixi run eval-*`.

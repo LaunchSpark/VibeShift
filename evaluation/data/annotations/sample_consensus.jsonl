@@ -1,0 +1,10 @@
+{"id": "msg_001", "label": "anger", "soft_probs": {"joy": 0.0, "sadness": 0.0, "anger": 0.5, "fear": 0.0, "disgust": 0.5, "surprise": 0.0, "neutral": 0.0}, "is_context_dependent": true, "is_sarcastic": true}
+{"id": "msg_002", "label": "joy", "soft_probs": {"joy": 1.0, "sadness": 0.0, "anger": 0.0, "fear": 0.0, "disgust": 0.0, "surprise": 0.0, "neutral": 0.0}, "is_context_dependent": false, "is_sarcastic": false}
+{"id": "msg_003", "label": "sadness", "soft_probs": {"joy": 0.0, "sadness": 1.0, "anger": 0.0, "fear": 0.0, "disgust": 0.0, "surprise": 0.0, "neutral": 0.0}, "is_context_dependent": false, "is_sarcastic": false}
+{"id": "msg_004", "label": "surprise", "soft_probs": {"joy": 0.0, "sadness": 0.0, "anger": 0.0, "fear": 0.5, "disgust": 0.0, "surprise": 0.5, "neutral": 0.0}, "is_context_dependent": true, "is_sarcastic": false}
+{"id": "msg_005", "label": "disgust", "soft_probs": {"joy": 0.0, "sadness": 0.0, "anger": 0.5, "fear": 0.0, "disgust": 0.5, "surprise": 0.0, "neutral": 0.0}, "is_context_dependent": false, "is_sarcastic": false}
+{"id": "msg_006", "label": "neutral", "soft_probs": {"joy": 0.0, "sadness": 0.0, "anger": 0.5, "fear": 0.0, "disgust": 0.0, "surprise": 0.0, "neutral": 0.5}, "is_context_dependent": true, "is_sarcastic": true}
+{"id": "msg_007", "label": "joy", "soft_probs": {"joy": 1.0, "sadness": 0.0, "anger": 0.0, "fear": 0.0, "disgust": 0.0, "surprise": 0.0, "neutral": 0.0}, "is_context_dependent": false, "is_sarcastic": false}
+{"id": "msg_008", "label": "fear", "soft_probs": {"joy": 0.0, "sadness": 0.5, "anger": 0.0, "fear": 0.5, "disgust": 0.0, "surprise": 0.0, "neutral": 0.0}, "is_context_dependent": false, "is_sarcastic": false}
+{"id": "msg_009", "label": "neutral", "soft_probs": {"joy": 0.0, "sadness": 0.0, "anger": 0.0, "fear": 0.0, "disgust": 0.0, "surprise": 0.0, "neutral": 1.0}, "is_context_dependent": true, "is_sarcastic": false}
+{"id": "msg_010", "label": "disgust", "soft_probs": {"joy": 0.0, "sadness": 0.0, "anger": 0.0, "fear": 0.0, "disgust": 1.0, "surprise": 0.0, "neutral": 0.0}, "is_context_dependent": false, "is_sarcastic": false}
