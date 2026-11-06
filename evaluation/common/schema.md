@@ -48,31 +48,42 @@ into another conversation. Use the `split` field (`io.split_ids`) for splits.
 
 ---
 
-## Contract 1B — annotator & consensus files (owned by annotation)
+## Contract 1B — label & consensus files (owned by annotation)
 
-`annotator_a.jsonl` and `annotator_b.jsonl` — one independent label per message:
+**Per-labeler files** — `annotations/labels/{labeler}_w{W}.jsonl`, written by
+`pixi run label-export` from each person's local PocketBase and committed. One
+row per message that labeler labeled at window size `W` (the window is the `W`
+messages ending on the target), sorted by `queue_position`:
 
 ```json
-{"id": "msg_001", "label": "anger", "is_context_dependent": true, "is_sarcastic": true}
+{"id": "298954459172700181:3", "labeler": "lucas", "window_size": 5, "label": "anger", "queue_position": 512, "algorithm_version": 1}
 ```
 
-`consensus.jsonl` — the adjudicated gold, plus the pre-adjudication soft distribution:
+Everyone labels the same queue in the same order, so labelers line up by `id`.
+Files for different window sizes are never mixed.
+
+**Overrides** — `annotations/overrides_w{W}.json`, committed: `{"<id>": "<label>"}`
+for ties the team adjudicated.
+
+**Consensus** — `annotations/consensus_w{W}.jsonl`, built by
+`pixi run label-consensus --window W` over the messages *every* labeler has
+labeled at that size:
 
 ```json
 {
-  "id": "msg_001",
+  "id": "298954459172700181:3",
   "label": "anger",
-  "soft_probs": {"joy": 0.0, "sadness": 0.0, "anger": 0.5, "fear": 0.0, "disgust": 0.5, "surprise": 0.0, "neutral": 0.0},
-  "is_context_dependent": true,
-  "is_sarcastic": true
+  "soft_probs": {"joy": 0.0, "sadness": 0.0, "anger": 0.5, "fear": 0.0, "disgust": 0.5, "surprise": 0.0, "neutral": 0.0}
 }
 ```
 
-- `label` — the adjudicated **gold** label (used for Macro-F1, Top-2, confusion matrix).
-- `soft_probs` — the normalized distribution over the two annotators' labels
-  **before** adjudication (the 50/50 split when A and B disagreed). Used for the
-  soft-distribution checks (JSD). Keys must be exactly `LABELS`.
-- `is_context_dependent`, `is_sarcastic` — slice flags for the sliced Macro-F1.
+- `label` — the **gold** label: strict majority across labelers, else the
+  override; unresolved ties are listed by the script and left out.
+- `soft_probs` — the share of labelers choosing each label, **before** any
+  override. Used for the soft-distribution checks (JSD). Keys must be exactly `LABELS`.
+
+Scripts that read gold take `--window W`; with exactly one consensus file
+present they use it automatically.
 
 ## Contract 2 — `evaluation/predictions/{model_name}.jsonl` (every model writes this)
 

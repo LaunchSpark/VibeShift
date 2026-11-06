@@ -63,16 +63,65 @@ def load_messages(path: Path | None = None) -> list[dict]:
     return read_jsonl(SAMPLE_MESSAGES)
 
 
-def load_consensus(path: Path | None = None) -> dict[str, dict]:
-    """Gold rows keyed by message id, or the sample consensus if missing."""
+def consensus_path(window: int) -> Path:
+    """Gold labels made at window size ``window`` (built by `pixi run label-consensus`)."""
+    return ANNOTATIONS / f"consensus_w{window}.jsonl"
+
+
+def overrides_path(window: int) -> Path:
+    """Adjudicated tie-breaks for one window size: ``{"<id>": "<label>"}``."""
+    return ANNOTATIONS / f"overrides_w{window}.json"
+
+
+def consensus_windows() -> list[int]:
+    """Window sizes that have a consensus file, ascending."""
+    sizes = []
+    for p in ANNOTATIONS.glob("consensus_w*.jsonl"):
+        suffix = p.stem.removeprefix("consensus_w")
+        if suffix.isdigit():
+            sizes.append(int(suffix))
+    return sorted(sizes)
+
+
+def load_label_files(window: int, directory: Path | None = None) -> dict[str, dict[str, str]]:
+    """Every labeler's labels at one window size: labeler -> {message id -> label}."""
+    directory = LABEL_FILES if directory is None else directory
+    out = {}
+    for p in sorted(directory.glob(f"*_w{window}.jsonl")):
+        labeler = p.stem.removesuffix(f"_w{window}")
+        out[labeler] = {r["id"]: r["label"] for r in read_jsonl(p)}
+    return out
+
+
+def load_consensus(path: Path | None = None, window: int | None = None) -> dict[str, dict]:
+    """Gold rows keyed by message id.
+
+    ``window`` picks ``consensus_w{window}.jsonl``. Without it, the single
+    consensus file present is used; several present is an error (pass
+    ``--window``); none falls back to the legacy file, then the sample fixture.
+    """
+    if path is None and window is not None:
+        path = consensus_path(window)
+        if not path.exists():
+            raise SystemExit(
+                f"{path.name} not found — run `pixi run label-consensus --window {window}` first."
+            )
+    if path is None:
+        windows = consensus_windows()
+        if len(windows) == 1:
+            path = consensus_path(windows[0])
+        elif len(windows) > 1:
+            raise SystemExit(
+                f"gold labels exist for window sizes {windows}; pass --window to choose one."
+            )
     if path is not None:
         rows = read_jsonl(path)
     elif CONSENSUS.exists():
         rows = read_jsonl(CONSENSUS)
     else:
         _warn(
-            f"{CONSENSUS.name} not found — using {SAMPLE_CONSENSUS.name} (10 rows). "
-            "Replace once A & B adjudicate the real gold labels."
+            f"no consensus file found — using {SAMPLE_CONSENSUS.name} (10 rows). "
+            "Build real gold with `pixi run label-consensus --window W`."
         )
         rows = read_jsonl(SAMPLE_CONSENSUS)
     return {row["id"]: row for row in rows}
