@@ -56,10 +56,11 @@ def _feature_matrix(ids: list[str], feature_models: list[str]) -> np.ndarray:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--features", nargs="+", default=DEFAULT_FEATURES)
+    ap.add_argument("--window", type=int, help="window size whose gold labels to train on")
     args = ap.parse_args()
 
     messages = io.load_messages()
-    gold = io.load_consensus()
+    gold = io.load_consensus(window=args.window)
     dev = [m["id"] for m in messages if m.get("split") == "dev" and m["id"] in gold]
     test = [m["id"] for m in messages if m.get("split") == "test" and m["id"] in gold]
     if not dev or not test:

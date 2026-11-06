@@ -1,7 +1,7 @@
 """Score every model in ``predictions/`` against the gold consensus labels.
 
-Produces the final report table (Macro-F1 overall + sliced by
-``is_context_dependent`` / ``is_sarcastic``, Top-2 accuracy, multi-class Brier,
+Produces the final report table (Macro-F1 overall + on context-sensitive
+messages, Top-2 accuracy, multi-class Brier,
 log-loss, JSD, latency, cost) and the report charts: a model comparison, plus a
 confusion matrix, label-distribution comparison, and τ sweep per model. All
 metrics are schema-ordered (see ``metrics.py``); charts are Altair, rendered to
@@ -10,7 +10,11 @@ PNG headlessly by vl-convert-python. For interactive drill-down, use
 
 Run:
     pixi run eval-report                  # default τ (VIBESHIFT_TAU or 0.0), test split
-    python -m evaluation.eval.evaluate --tau 0.3 --split test
+    python -m evaluation.eval.evaluate --tau 0.3 --split test --window 5
+
+"Context-sensitive" messages are those whose gold label differs between the
+smallest and largest window size labeled (``io.context_sensitive_ids``); the
+column is NaN until gold exists for two window sizes.
 """
 
 from __future__ import annotations
@@ -32,7 +36,9 @@ def _default_tau() -> float:
         return 0.0
 
 
-def evaluate_model(rows: list[dict], gold: dict[str, dict], tau: float) -> dict:
+def evaluate_model(
+    rows: list[dict], gold: dict[str, dict], tau: float, context_ids: set[str] | None = None
+) -> dict:
     """Metrics for one model over the messages it and the gold set share."""
     rows = [r for r in rows if r["id"] in gold]
     ids = [r["id"] for r in rows]
@@ -40,9 +46,11 @@ def evaluate_model(rows: list[dict], gold: dict[str, dict], tau: float) -> dict:
     gold_labels = [gold[i]["label"] for i in ids]
     pred_labels = [metrics.gated_label(r["probs"], r["raw_top_label"], tau) for r in rows]
 
-    def sliced(flag: str) -> float:
-        g = [gl for gl, i in zip(gold_labels, ids) if gold[i].get(flag)]
-        p = [pl for pl, i in zip(pred_labels, ids) if gold[i].get(flag)]
+    def sliced(keep: set[str] | None) -> float:
+        if keep is None:
+            return float("nan")
+        g = [gl for gl, i in zip(gold_labels, ids) if i in keep]
+        p = [pl for pl, i in zip(pred_labels, ids) if i in keep]
         return metrics.macro_f1(g, p) if g else float("nan")
 
     # JSD: predicted distribution vs gold, two ways.
@@ -53,8 +61,7 @@ def evaluate_model(rows: list[dict], gold: dict[str, dict], tau: float) -> dict:
     return {
         "n": len(rows),
         "macro_f1": metrics.macro_f1(gold_labels, pred_labels),
-        "macro_f1_context": sliced("is_context_dependent"),
-        "macro_f1_sarcastic": sliced("is_sarcastic"),
+        "macro_f1_context": sliced(context_ids),
         "top2_acc": metrics.top_k_accuracy(gold_labels, probs_list, k=2),
         "brier": metrics.brier_score(gold_labels, probs_list),
         "log_loss": metrics.log_loss(gold_labels, probs_list),
@@ -67,8 +74,7 @@ def evaluate_model(rows: list[dict], gold: dict[str, dict], tau: float) -> dict:
 
 _COLUMNS = [
     ("macro_f1", "Macro-F1"),
-    ("macro_f1_context", "Macro-F1 (ctx)"),
-    ("macro_f1_sarcastic", "Macro-F1 (sarc)"),
+    ("macro_f1_context", "Macro-F1 (ctx-sensitive)"),
     ("top2_acc", "Top-2"),
     ("brier", "Brier"),
     ("log_loss", "LogLoss"),
@@ -114,10 +120,19 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Score prediction files against gold labels.")
     ap.add_argument("--tau", type=float, default=_default_tau(), help="τ cutoff (default VIBESHIFT_TAU or 0.0)")
     ap.add_argument("--split", choices=["dev", "test", "all"], default="test")
+    ap.add_argument("--window", type=int, help="window size whose gold labels to score against")
     args = ap.parse_args()
 
     messages = io.load_messages()
-    gold = frames.filter_split(messages, io.load_consensus(), args.split)
+    gold = frames.filter_split(messages, io.load_consensus(window=args.window), args.split)
+    if not gold:
+        raise SystemExit(
+            f"no gold labels for the messages in messages.jsonl (split={args.split}). "
+            "Label, export, then run `pixi run label-consensus --window W`."
+        )
+    context_ids = io.context_sensitive_ids()
+    windows = io.consensus_windows()
+    window = args.window or (windows[0] if len(windows) == 1 else "sample")
 
     models = io.list_prediction_models()
     if not models:
@@ -126,17 +141,17 @@ def main() -> None:
             "e.g. `pixi run eval-transformers` or `pixi run eval-nrc`."
         )
 
-    print(f"Scoring {len(models)} model(s) on split={args.split}, τ={args.tau}, "
+    print(f"Scoring {len(models)} model(s) on window={window}, split={args.split}, τ={args.tau}, "
           f"{len(gold)} gold messages.\n")
     preds = {name: io.load_predictions(name) for name in models}
-    results = {name: evaluate_model(rows, gold, args.tau) for name, rows in preds.items()}
+    results = {name: evaluate_model(rows, gold, args.tau, context_ids) for name, rows in preds.items()}
 
     table = _table(results)
     print(table + "\n")
 
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
     (REPORT_DIR / "metrics.md").write_text(
-        f"# Evaluation report\n\nsplit=`{args.split}`, τ=`{args.tau}`, "
+        f"# Evaluation report\n\nwindow=`{window}`, split=`{args.split}`, τ=`{args.tau}`, "
         f"gold messages=`{len(gold)}`\n\n{table}\n"
     )
     _write_charts(preds, results, gold, messages, args.tau)

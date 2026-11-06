@@ -127,6 +127,21 @@ def load_consensus(path: Path | None = None, window: int | None = None) -> dict[
     return {row["id"]: row for row in rows}
 
 
+def context_sensitive_ids() -> set[str] | None:
+    """Messages whose gold label changes between the smallest and largest window size.
+
+    ``None`` until gold exists for at least two window sizes. This replaces the old
+    hand-set ``is_context_dependent`` flag: context mattered if more of it changed
+    the label.
+    """
+    windows = consensus_windows()
+    if len(windows) < 2:
+        return None
+    small = load_consensus(window=windows[0])
+    large = load_consensus(window=windows[-1])
+    return {i for i in small.keys() & large.keys() if small[i]["label"] != large[i]["label"]}
+
+
 def using_sample() -> bool:
     """True when the real dataset is not present yet (for banners in runners)."""
     return not MESSAGES.exists()

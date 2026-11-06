@@ -27,6 +27,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default="laya", help="prediction file stem to sweep")
     ap.add_argument("--split", choices=["dev", "test", "all"], default="test")
+    ap.add_argument("--window", type=int, help="window size whose gold labels to use")
     ap.add_argument("--grid", type=float, nargs=3, metavar=("START", "STOP", "STEP"),
                     help="τ grid (default 0.15 0.85 0.05)")
     args = ap.parse_args()
@@ -35,7 +36,12 @@ def main() -> None:
         raise SystemExit(f"no predictions/{args.model}.jsonl — run its model first.")
 
     messages = io.load_messages()
-    gold = frames.filter_split(messages, io.load_consensus(), args.split)
+    gold = frames.filter_split(messages, io.load_consensus(window=args.window), args.split)
+    if not gold:
+        raise SystemExit(
+            f"no gold labels for the messages in messages.jsonl (split={args.split}). "
+            "Label, export, then run `pixi run label-consensus --window W`."
+        )
     taus = frames.TAU_GRID
     if args.grid:
         start, stop, step = args.grid
