@@ -142,6 +142,7 @@ Index on `(conversation_key, message_number)` for window lookup.
 | `labeler` | text | name the labeler enters once in the GUI |
 | `window_size` | number | W the label was made at |
 | `label` | select | one of the 7 `LABELS` |
+| `queue_position` | number | copied from the target, so resume is a simple lookup |
 | `algorithm_version` | number | from the manifest |
 | `created` / `updated` | autodate | |
 
