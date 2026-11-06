@@ -1,7 +1,8 @@
 import httpx
 import pytest
 
-COLLECTIONS = ["guilds", "channels", "members", "messages", "daily_rollups", "backfill_jobs"]
+COLLECTIONS = ["guilds", "channels", "members", "messages", "daily_rollups", "backfill_jobs",
+               "label_messages", "labels"]
 
 
 @pytest.mark.parametrize("name", COLLECTIONS)

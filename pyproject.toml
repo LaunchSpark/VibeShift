@@ -98,3 +98,6 @@ eval-nrc = "python -m evaluation.models.nrc_lexicon.run"              # D
 eval-stack = "python -m evaluation.models.stacking.train"             # D
 eval-report = "python -m evaluation.eval.evaluate"                    # D
 eval-notebook = "marimo edit evaluation/eval/explore_eval.py"         # everyone
+
+# Windowed labeling (evaluation/labeling/). Needs `pixi run pb` running.
+label-import = "python -m evaluation.labeling.importer"               # everyone (once per CSV)

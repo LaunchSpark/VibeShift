@@ -201,7 +201,7 @@ evaluation/eval/report/
 __marimo__/
 
 # Local datasets (raw exports, labeling data)
-data/
+/data/
 
 # Generated from data/discord_messages.csv (contains message text; regenerate locally)
 evaluation/data/messages.jsonl
