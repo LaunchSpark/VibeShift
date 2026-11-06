@@ -17,6 +17,7 @@ from .labels import LABELS, NEUTRAL
 ROOT = Path(__file__).resolve().parents[1]  # evaluation/
 DATA = ROOT / "data"
 ANNOTATIONS = DATA / "annotations"
+LABEL_FILES = ANNOTATIONS / "labels"  # per-labeler exports: {labeler}_w{W}.jsonl
 PREDICTIONS = ROOT / "predictions"
 
 MESSAGES = DATA / "messages.jsonl"
