@@ -48,14 +48,11 @@ def message_frame(
                 "true_label": g["label"],
                 "pred_label": pred,
                 "correct": pred == g["label"],
-                "is_sarcastic": bool(g.get("is_sarcastic")),
-                "is_context_dependent": bool(g.get("is_context_dependent")),
             }
         )
     return pl.DataFrame(records, schema={
         "id": pl.String, "content": pl.String, "preceding_3": pl.String,
         "true_label": pl.String, "pred_label": pl.String, "correct": pl.Boolean,
-        "is_sarcastic": pl.Boolean, "is_context_dependent": pl.Boolean,
     })
 
 

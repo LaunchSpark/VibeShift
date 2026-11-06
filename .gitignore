@@ -199,3 +199,9 @@ evaluation/eval/report/
 
 # marimo session caches (cell outputs saved next to each notebook)
 __marimo__/
+
+# Local datasets (raw exports, labeling data)
+/data/
+
+# Generated from data/discord_messages.csv (contains message text; regenerate locally)
+evaluation/data/messages.jsonl
