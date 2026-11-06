@@ -1,50 +1,75 @@
-"""Inter-annotator reliability (owned by Teammates A & B).
+"""Inter-annotator agreement for one window size.
 
-Computes Cohen's κ between ``annotator_a.jsonl`` and ``annotator_b.jsonl`` on the
-7-class emotion label and on the ``is_context_dependent`` / ``is_sarcastic``
-flags, and lists the message ids where A and B disagree (the adjudication
-worklist). The adjudicated decisions go into ``consensus.jsonl`` (Contract 1B),
-whose ``soft_probs`` should preserve the pre-adjudication 50/50 split.
+Reads every labeler's ``annotations/labels/*_w{W}.jsonl`` and reports Cohen's κ
+for each pair of labelers (on the messages both labeled) and Fleiss' κ across
+everyone (on the messages all of them labeled), then lists the messages where
+labelers disagree — the adjudication worklist for ``label-consensus``.
 
-    pixi run eval-kappa
+    pixi run eval-kappa --window 5
 """
 
 from __future__ import annotations
 
+import argparse
+from itertools import combinations
+
 from sklearn.metrics import cohen_kappa_score
 
 from evaluation.common import io
-
-A = io.ANNOTATIONS / "annotator_a.jsonl"
-B = io.ANNOTATIONS / "annotator_b.jsonl"
+from evaluation.common.labels import LABELS
 
 
-def _load(path):
-    if not path.exists():
-        raise SystemExit(
-            f"{path.name} not found. Teammates A & B: produce independent label files "
-            f"(Contract 1B) at {path}, then re-run `pixi run eval-kappa`."
-        )
-    return {r["id"]: r for r in io.read_jsonl(path)}
+def fleiss_kappa(counts: list[list[int]]) -> float:
+    """Fleiss' κ. Rows are items, columns categories; every row sums to the same rater count."""
+    n_items = len(counts)
+    raters = sum(counts[0])
+    total = n_items * raters
+    p_cat = [sum(row[j] for row in counts) / total for j in range(len(counts[0]))]
+    p_item = [(sum(c * c for c in row) - raters) / (raters * (raters - 1)) for row in counts]
+    p_bar = sum(p_item) / n_items
+    p_e = sum(p * p for p in p_cat)
+    return 1.0 if p_e == 1 else (p_bar - p_e) / (1 - p_e)
+
+
+def pairwise_cohen(by_labeler: dict[str, dict[str, str]]) -> dict[tuple[str, str], float]:
+    """Cohen's κ for every pair of labelers, on the ids both labeled."""
+    out = {}
+    for a, b in combinations(sorted(by_labeler), 2):
+        ids = sorted(set(by_labeler[a]) & set(by_labeler[b]))
+        if ids:
+            out[(a, b)] = cohen_kappa_score(
+                [by_labeler[a][i] for i in ids], [by_labeler[b][i] for i in ids], labels=list(LABELS)
+            )
+    return out
 
 
 def main() -> None:
-    a, b = _load(A), _load(B)
-    ids = sorted(set(a) & set(b))
-    if not ids:
-        raise SystemExit("no overlapping ids between annotator_a and annotator_b.")
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--window", type=int, required=True, help="window size to measure")
+    args = ap.parse_args()
 
-    for field in ("label", "is_context_dependent", "is_sarcastic"):
-        ka = [a[i].get(field) for i in ids]
-        kb = [b[i].get(field) for i in ids]
-        kappa = cohen_kappa_score(ka, kb)
-        agree = sum(x == y for x, y in zip(ka, kb)) / len(ids)
-        print(f"{field:22s}  κ={kappa:.3f}  raw agreement={agree:.1%}")
+    by_labeler = io.load_label_files(args.window)
+    if len(by_labeler) < 2:
+        raise SystemExit(
+            f"need label files from at least 2 labelers at window size {args.window} "
+            f"(found {sorted(by_labeler) or 'none'} in {io.LABEL_FILES})."
+        )
 
-    disagree = [i for i in ids if a[i].get("label") != b[i].get("label")]
-    print(f"\n{len(disagree)} label disagreements to adjudicate:")
+    print(f"window size {args.window}")
+    for (a, b), kappa in pairwise_cohen(by_labeler).items():
+        shared = len(set(by_labeler[a]) & set(by_labeler[b]))
+        print(f"  Cohen's κ {a} vs {b}: {kappa:.3f}  ({shared} shared messages)")
+
+    shared = sorted(set.intersection(*(set(v) for v in by_labeler.values())))
+    if not shared:
+        raise SystemExit("no message has been labeled by every labeler yet.")
+    table = [[sum(labels[i] == k for labels in by_labeler.values()) for k in LABELS] for i in shared]
+    print(f"  Fleiss' κ ({len(by_labeler)} labelers, {len(shared)} messages): {fleiss_kappa(table):.3f}")
+
+    disagree = [i for i in shared if len({labels[i] for labels in by_labeler.values()}) > 1]
+    print(f"\n{len(disagree)} messages with disagreement:")
     for i in disagree:
-        print(f"  {i}: A={a[i]['label']!r} B={b[i]['label']!r}")
+        print(f"  {i}: " + ", ".join(f"{lab}={labels[i]}" for lab, labels in sorted(by_labeler.items())))
 
 
 if __name__ == "__main__":
