@@ -55,14 +55,31 @@ def fetch_all(client: httpx.Client, collection: str, fields: str = "", filter: s
 
 def _sync(client: httpx.Client, records: list[dict]) -> None:
     existing = {r["message_id"]: r for r in fetch_all(client, "label_messages", "id," + ",".join(_FIELDS))}
-    url = "/api/collections/label_messages/records"
-    # Two passes keep the unique queue_position index happy when positions move:
-    # first park changed rows on negative positions, then write the real values.
+    wanted = {r["message_id"] for r in records}
+    stale = [r for mid, r in existing.items() if mid not in wanted]
     changed = [(existing[r["message_id"]], r) for r in records
                if r["message_id"] in existing
                and any(existing[r["message_id"]].get(k) != r[k] for k in _FIELDS)]
-    for old, _ in changed:
-        client.patch(f"{url}/{old['id']}", json={"queue_position": -1 - old["queue_position"]}).raise_for_status()
+    moved = [old for old, new in changed if old["queue_position"] != new["queue_position"]]
+
+    # Saved labels record their queue position, so reordering or dropping messages
+    # after labeling has started would point everyone's progress at the wrong windows.
+    if (stale or moved) and fetch_all(client, "labels", "id")[:1]:
+        raise SystemExit(
+            f"labels already exist in PocketBase, but this import would move {len(moved)} and "
+            f"remove {len(stale)} messages in the queue. Export them first (`pixi run label-export`); "
+            "changing the order invalidates existing progress."
+        )
+
+    url = "/api/collections/label_messages/records"
+    for r in stale:
+        client.delete(f"{url}/{r['id']}").raise_for_status()
+    # Park changed rows on positions nothing else holds (below every current value,
+    # including rows left negative by an interrupted run), then write the real values,
+    # so the unique queue_position index never collides.
+    base = min([0, *(r["queue_position"] for r in existing.values())]) - 1
+    for i, (old, _) in enumerate(changed):
+        client.patch(f"{url}/{old['id']}", json={"queue_position": base - i}).raise_for_status()
     for old, new in changed:
         client.patch(f"{url}/{old['id']}", json=new).raise_for_status()
     for r in records:

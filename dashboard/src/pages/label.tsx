@@ -9,8 +9,10 @@ import { Progress } from '@/components/ui/progress'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { LABELS, labelName, type Label } from '@/lib/emotions'
+import { pb } from '@/lib/pb'
 import {
   DEFAULT_WINDOW_SIZE,
+  describeError,
   MAX_WINDOW_SIZE,
   fetchLabel,
   fetchLabeledPositions,
@@ -20,6 +22,7 @@ import {
   firstGap,
   labelerStorageKey,
   normalizeLabeler,
+  parseWindowSize,
   saveLabel,
   windowSizeStorageKey,
   type LabelTarget,
@@ -44,11 +47,10 @@ function writeStorage(key: string, value: string | null) {
 }
 
 function initialSize(): number {
-  const n = Number(readStorage(windowSizeStorageKey))
-  return Number.isInteger(n) && n >= 1 && n <= MAX_WINDOW_SIZE ? n : DEFAULT_WINDOW_SIZE
+  return parseWindowSize(readStorage(windowSizeStorageKey) ?? '') ?? DEFAULT_WINDOW_SIZE
 }
 
-const errorText = (e: any) => String(e?.message ?? e)
+const errorText = (e: unknown) => describeError(e, pb.baseURL)
 
 export default function LabelPage() {
   const [labeler, setLabeler] = useState<string | null>(() => readStorage(labelerStorageKey) || null)
@@ -202,15 +204,17 @@ function Labeling({ labeler, onChangeLabeler }: { labeler: string; onChangeLabel
     return () => window.removeEventListener('keydown', onKey)
   }, [pick, back])
 
-  const applySize = (raw: string) => {
-    setSizeDraft(raw)
-    const n = Number(raw)
-    if (Number.isInteger(n) && n >= 1 && n <= MAX_WINDOW_SIZE && n !== size) {
-      writeStorage(windowSizeStorageKey, String(n))
-      setLabeled(null)
-      setPosition(null)
-      setSize(n)
-    }
+  // Applied on Enter or blur, never per keystroke: otherwise a label key pressed
+  // while the box still has focus ("1" then "3") would silently switch to W=13.
+  const applySize = () => {
+    const n = parseWindowSize(sizeDraft)
+    setSizeDraft(String(n ?? size))
+    if (n === null || n === size) return
+    writeStorage(windowSizeStorageKey, String(n))
+    setError(null)
+    setLabeled(null)
+    setPosition(null)
+    setSize(n)
   }
 
   const header = (
@@ -229,8 +233,11 @@ function Labeling({ labeler, onChangeLabeler }: { labeler: string; onChangeLabel
           min={1}
           max={MAX_WINDOW_SIZE}
           value={sizeDraft}
-          onChange={(e) => applySize(e.target.value)}
-          onBlur={() => setSizeDraft(String(size))}
+          onChange={(e) => setSizeDraft(e.target.value)}
+          onBlur={applySize}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') e.currentTarget.blur()
+          }}
           className="w-20"
         />
       </label>

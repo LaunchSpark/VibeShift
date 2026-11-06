@@ -75,3 +75,42 @@ def test_labels_reject_unknown_label(pb_url):
     body = {"message_id": "a:1", "labeler": "lucas", "window_size": 5, "label": "love",
             "queue_position": 0, "algorithm_version": 1}
     assert httpx.post(f"{pb_url}/api/collections/labels/records", json=body).status_code == 400
+
+
+def _patch(pb_url, rec_id, body):
+    httpx.patch(f"{pb_url}/api/collections/label_messages/records/{rec_id}", json=body).raise_for_status()
+
+
+def test_reseed_recovers_from_interrupted_sync(pb_url, paths):
+    csv, manifest, msgs = paths
+    run_import(pb_url, csv, manifest, msgs, seed=1, new_manifest=True)
+    # Simulate a sync killed mid-way: some rows left parked at negative positions.
+    for r in sorted(_records(pb_url), key=lambda r: r["queue_position"])[:5]:
+        _patch(pb_url, r["id"], {"queue_position": -1 - r["queue_position"]})
+    assert run_import(pb_url, csv, manifest, msgs, seed=2, new_manifest=True) == TOTAL
+    assert sorted(r["queue_position"] for r in _records(pb_url)) == list(range(TOTAL))
+
+
+def test_reimport_drops_messages_no_longer_in_csv(pb_url, paths):
+    csv, manifest, msgs = paths
+    run_import(pb_url, csv, manifest, msgs, new_manifest=True)
+    kept = "".join(line for line in csv.read_text(encoding="utf-8").splitlines(keepends=True)
+                   if not line.startswith("c,"))
+    csv.write_text(kept, encoding="utf-8")
+    n = run_import(pb_url, csv, manifest, msgs, new_manifest=True)
+    recs = _records(pb_url)
+    assert n == TOTAL - SIZES["c"] == len(recs)
+    assert not any(r["message_id"].startswith("c:") for r in recs)
+    assert sorted(r["queue_position"] for r in recs) == list(range(n))
+
+
+def test_reorder_refused_once_labels_exist(pb_url, paths):
+    csv, manifest, msgs = paths
+    run_import(pb_url, csv, manifest, msgs, seed=1, new_manifest=True)
+    httpx.post(f"{pb_url}/api/collections/labels/records", json={
+        "message_id": "a:1", "labeler": "lucas", "window_size": 5, "label": "joy",
+        "queue_position": 0, "algorithm_version": 1}).raise_for_status()
+    before = {r["message_id"]: r["queue_position"] for r in _records(pb_url)}
+    with pytest.raises(SystemExit, match="labels already exist"):
+        run_import(pb_url, csv, manifest, msgs, seed=2, new_manifest=True)
+    assert {r["message_id"]: r["queue_position"] for r in _records(pb_url)} == before

@@ -34,6 +34,26 @@ export function windowRange(messageNumber: number, size: number): { from: number
   return { from: Math.max(1, messageNumber - size + 1), to: messageNumber }
 }
 
+/** A typed window size, or null unless it is a whole number from 1 to MAX_WINDOW_SIZE. */
+export function parseWindowSize(raw: string): number | null {
+  const t = raw.trim()
+  if (!/^\d+$/.test(t)) return null
+  const n = Number(t)
+  return n >= 1 && n <= MAX_WINDOW_SIZE ? n : null
+}
+
+/** A labeler-facing message for a failed PocketBase call. */
+export function describeError(e: unknown, baseUrl: string): string {
+  const err = e as { status?: number; url?: string; message?: string } | null
+  if (err && typeof err === 'object' && err.status === 0) {
+    return `Can't reach PocketBase at ${baseUrl}. Start it with \`pixi run pb\`.`
+  }
+  if (err && typeof err === 'object' && err.status === 404 && /\/collections\/(label_messages|labels)\//.test(err.url ?? '')) {
+    return 'The labeling collections are missing. Restart `pixi run pb` to apply migrations, then run `pixi run label-import`.'
+  }
+  return String((err && typeof err === 'object' && err.message) || e)
+}
+
 /** Smallest non-negative integer not in `positions`: where a labeler resumes. */
 export function firstGap(positions: number[]): number {
   const seen = new Set(positions)
