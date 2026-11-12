@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { BrowserRouter, Outlet, Route, Routes } from 'react-router'
+import { BrowserRouter, Outlet, Route, Routes, useLocation } from 'react-router'
 import { AppSidebar } from '@/components/app-sidebar'
 import { ErrorAlert } from '@/components/app-alert'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/ui/empty'
@@ -14,6 +14,7 @@ import LabelPage from '@/pages/label'
 
 function Layout() {
   const [filters] = useFilters()
+  const { pathname } = useLocation()
   const [guilds, setGuilds] = useState<Guild[] | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -39,7 +40,7 @@ function Layout() {
               <Skeleton className="h-24 w-full" />
               <Skeleton className="h-96 w-full" />
             </div>
-          ) : guild ? (
+          ) : guild || pathname === '/label' ? (
             <Outlet context={{ guilds, guild } satisfies ShellContext} />
           ) : (
             <Empty className="border">
