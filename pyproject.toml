@@ -80,11 +80,11 @@ bot = "vibeshift-bot"
 dev = { cmd = "python scripts/dev.py", depends-on = ["dash-install"] }
 notebook = "marimo edit notebooks/emotion_tracker.py"
 dash-install = "npm --prefix dashboard install"
-dash = "npm --prefix dashboard run dev"
+dash = { cmd = "npm --prefix dashboard run dev", depends-on = ["dash-install"] }
 dash-test = "npm --prefix dashboard test -- --run"
 pb-install = "python scripts/install_pocketbase.py 0.40.5"
 pb-superuser = { cmd = "python scripts/pb_superuser.py", depends-on = ["pb-install"] }
-pb = { cmd = "operations/tools/pocketbase/pocketbase serve --http=127.0.0.1:8090 --dir=operations/data/pocketbase --migrationsDir=pb_migrations --origins=http://localhost:5173,http://127.0.0.1:5173", depends-on = ["pb-superuser"] }
+pb = { cmd = "python scripts/pb_serve.py serve --http=127.0.0.1:8090 --dir=operations/data/pocketbase --migrationsDir=pb_migrations --origins=http://localhost:5173,http://127.0.0.1:5173", depends-on = ["pb-superuser"] }
 
 # Evaluation project (evaluation/). Each model task writes predictions/{model}.jsonl;
 # eval-report scores every prediction file. All run on the sample fixture until the

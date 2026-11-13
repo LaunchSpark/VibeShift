@@ -23,6 +23,13 @@ valid prediction file is picked up automatically by `eval-report`.
 
 ## Labeling workflow
 
+For the current dashboard labeling workflow, follow the **Labeler quick start**
+in the repository [README](../README.md). It reads CSV files directly from
+`data/`, lets the labeler choose the dataset, and saves annotations under
+`data/annotations/labels/` without PocketBase. The PocketBase steps below are
+the older research-pipeline workflow and are only needed for that importer,
+consensus, and evaluation path.
+
 Labels are made on a **sliding window**: you see the last *W* messages of a
 conversation and label only the last one. Everyone walks the **same seeded
 queue**, so anyone's first 500 are the same 500 messages, and windows that share

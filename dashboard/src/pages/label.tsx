@@ -9,12 +9,12 @@ import { Progress } from '@/components/ui/progress'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { LABELS, labelName, type Label } from '@/lib/emotions'
-import { pb } from '@/lib/pb'
 import {
   DEFAULT_WINDOW_SIZE,
   describeError,
   MAX_WINDOW_SIZE,
   fetchLabel,
+  fetchDatasets,
   fetchLabeledPositions,
   fetchQueueSize,
   fetchTarget,
@@ -25,6 +25,7 @@ import {
   parseWindowSize,
   saveLabel,
   windowSizeStorageKey,
+  type Dataset,
   type LabelTarget,
   type WindowMessage,
 } from '@/lib/labeling'
@@ -50,7 +51,9 @@ function initialSize(): number {
   return parseWindowSize(readStorage(windowSizeStorageKey) ?? '') ?? DEFAULT_WINDOW_SIZE
 }
 
-const errorText = (e: unknown) => describeError(e, pb.baseURL)
+const datasetStorageKey = 'vibeshift.labelDataset'
+
+const errorText = (e: unknown) => describeError(e, 'the local data folder')
 
 export default function LabelPage() {
   const [labeler, setLabeler] = useState<string | null>(() => readStorage(labelerStorageKey) || null)
@@ -107,6 +110,8 @@ function LabelerGate({ onSubmit }: { onSubmit: (name: string) => void }) {
 }
 
 function Labeling({ labeler, onChangeLabeler }: { labeler: string; onChangeLabeler: () => void }) {
+  const [datasets, setDatasets] = useState<Dataset[] | null>(null)
+  const [dataset, setDataset] = useState<Dataset | null>(null)
   const [size, setSize] = useState(initialSize)
   const [sizeDraft, setSizeDraft] = useState(() => String(initialSize()))
   const [queueSize, setQueueSize] = useState<number | null>(null)
@@ -124,10 +129,22 @@ function Labeling({ labeler, onChangeLabeler }: { labeler: string; onChangeLabel
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  useEffect(() => {
+    fetchDatasets().then(
+      (names) => {
+        setDatasets(names)
+        const saved = readStorage(datasetStorageKey)
+        setDataset(saved && names.includes(saved) ? saved : names[0] ?? null)
+      },
+      (e) => setError(errorText(e)),
+    )
+  }, [])
+
   // Queue size and this labeler's progress at this window size; resume at the first gap.
   useEffect(() => {
+    if (!dataset) return
     let stale = false
-    Promise.all([fetchQueueSize(), fetchLabeledPositions(labeler, size)]).then(
+    Promise.all([fetchQueueSize(dataset), fetchLabeledPositions(dataset, labeler, size)]).then(
       ([total, positions]) => {
         if (stale) return
         const set = new Set(positions)
@@ -140,23 +157,23 @@ function Labeling({ labeler, onChangeLabeler }: { labeler: string; onChangeLabel
     return () => {
       stale = true
     }
-  }, [labeler, size])
+  }, [dataset, labeler, size])
 
   // The window ending on the target at `position`, plus any label already saved for it.
   useEffect(() => {
-    if (position === null || queueSize === null || position >= queueSize) return
+    if (!dataset || position === null || queueSize === null || position >= queueSize) return
     let stale = false
-    fetchTarget(position)
+    fetchTarget(dataset, position)
       .then(async (t) => {
         if (!t) throw new Error(`No message at queue position ${position}; re-run pixi run label-import.`)
-        const [win, saved] = await Promise.all([fetchWindow(t, size), fetchLabel(labeler, size, t.message_id)])
+        const [win, saved] = await Promise.all([fetchWindow(dataset, t, size), fetchLabel(dataset, labeler, size, t.message_id)])
         if (!stale) setLoaded({ position, size, target: t, messages: win, current: saved })
       })
       .catch((e) => !stale && setError(errorText(e)))
     return () => {
       stale = true
     }
-  }, [position, queueSize, size, labeler])
+  }, [dataset, position, queueSize, size, labeler])
 
   const ready = loaded !== null && loaded.position === position && loaded.size === size
   const target = ready ? loaded.target : null
@@ -168,7 +185,8 @@ function Labeling({ labeler, onChangeLabeler }: { labeler: string; onChangeLabel
       if (saving || !target || !labeled) return
       setSaving(true)
       try {
-        await saveLabel(labeler, size, target, label)
+        if (!dataset) return
+        await saveLabel(dataset, labeler, size, target, label)
         const next = new Set(labeled).add(target.queue_position)
         setLabeled(next)
         setPosition(firstGap([...next]))
@@ -178,7 +196,7 @@ function Labeling({ labeler, onChangeLabeler }: { labeler: string; onChangeLabel
         setSaving(false)
       }
     },
-    [saving, target, labeled, labeler, size],
+    [saving, target, labeled, dataset, labeler, size],
   )
 
   const back = useCallback(() => {
@@ -227,6 +245,27 @@ function Labeling({ labeler, onChangeLabeler }: { labeler: string; onChangeLabel
         </Button>
       </div>
       <label className="flex items-center gap-2 text-sm">
+        <span className="text-muted-foreground">Dataset</span>
+        <select
+          className="border-input bg-background h-9 max-w-64 rounded-md border px-2 text-sm"
+          value={dataset ?? ''}
+          onChange={(e) => {
+            const next = e.target.value
+            writeStorage(datasetStorageKey, next)
+            setDataset(next || null)
+            setLabeled(null)
+            setPosition(null)
+            setLoaded(null)
+            setError(null)
+          }}
+          disabled={!datasets?.length}
+          aria-label="Dataset"
+        >
+          {!datasets?.length && <option value="">No CSV datasets found</option>}
+          {datasets?.map((name) => <option key={name} value={name}>{name}</option>)}
+        </select>
+      </label>
+      <label className="flex items-center gap-2 text-sm">
         <span className="text-muted-foreground">Window size</span>
         <Input
           type="number"
@@ -253,6 +292,21 @@ function Labeling({ labeler, onChangeLabeler }: { labeler: string; onChangeLabel
     )
   }
 
+  if (datasets?.length === 0) {
+    return (
+      <div className="flex flex-col gap-4">
+        {header}
+        <Empty className="border">
+          <EmptyHeader>
+            <EmptyMedia variant="icon"><DatabaseZap /></EmptyMedia>
+            <EmptyTitle>No datasets found</EmptyTitle>
+            <EmptyDescription>Put one or more CSV files in <code>data/</code>, then refresh the page.</EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      </div>
+    )
+  }
+
   if (queueSize === null || labeled === null || position === null) {
     return (
       <div className="flex flex-col gap-4">
@@ -273,7 +327,7 @@ function Labeling({ labeler, onChangeLabeler }: { labeler: string; onChangeLabel
             </EmptyMedia>
             <EmptyTitle>Nothing imported yet</EmptyTitle>
             <EmptyDescription>
-              Run <code>pixi run label-import</code> with PocketBase running.
+              Put your CSV at <code>data/discord_messages.csv</code> and refresh the page.
             </EmptyDescription>
           </EmptyHeader>
         </Empty>

@@ -202,6 +202,7 @@ __marimo__/
 
 # Local datasets (raw exports, labeling data)
 /data/
+/data/annotations/
 
 # Generated from data/discord_messages.csv (contains message text; regenerate locally)
 evaluation/data/messages.jsonl

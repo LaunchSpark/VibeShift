@@ -18,6 +18,46 @@ PyTorch comes from conda-forge, which still publishes current builds for Intel
 Macs. Run tests with `pixi run test` (or `pixi run test-model` for the real
 model).
 
+## Labeler quick start
+
+This is the workflow for someone who has just pulled the repository and needs
+to label messages. Labeling is local and offline; you do not need Discord,
+bot credentials, PocketBase, or an import command.
+
+1. Install Pixi and prepare the environment:
+
+   ```bash
+   pixi install
+   ```
+
+2. Copy the dataset CSV files into the repository's `data/` directory. You can
+   label any CSV in that directory. Each file must have these columns:
+
+   ```text
+   conversation_key,conversation_message_number,author,message
+   ```
+
+3. Start the dashboard and leave this terminal running:
+
+   ```bash
+   pixi run dash
+   ```
+
+4. Open [http://localhost:5173/label](http://localhost:5173/label), choose a
+   dataset from the Dataset menu, enter your labeler name, and choose a window
+   size. The window size is the maximum number of messages shown, including the
+   message being labeled. Use keys `1`–`7` to choose an emotion and Backspace
+   to go back.
+
+5. Your work is written locally to
+   `data/annotations/labels/`. That directory is gitignored. Keep your
+   annotation files if they need to be submitted or shared; they are not
+   uploaded anywhere automatically.
+
+If the Dataset menu is empty, confirm that the files are directly inside
+`data/` (not a nested folder), have a `.csv` extension, and contain the four
+required columns. Refresh the page after adding or changing a dataset.
+
 ## Notebook
 
 ```bash
@@ -48,6 +88,20 @@ chat) are not captured yet.
 - PocketBase only accepts browser requests from the dashboard's origin
   (`localhost:5173` / `127.0.0.1:5173`), so other websites can't read your messages.
 - Tests: `pixi run dash-test`.
+
+### Label data
+
+Put one or more source CSV files in `data/`, then run:
+
+```bash
+pixi run dash
+```
+
+Open http://localhost:5173/label, choose a dataset, enter your name, and label
+with the on-screen buttons or keys `1`–`7`. The dashboard reads CSV files
+directly and writes each dataset/annotator's JSONL file to
+`data/annotations/labels/`.
+No PocketBase, bot, Discord connection, or import step is required.
 
 ### Demo data
 

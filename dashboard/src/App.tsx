@@ -33,14 +33,16 @@ function Layout() {
           <span className="text-sm font-medium">{guild?.name ?? 'VibeShift'}</span>
         </header>
         <div className="mx-auto w-full max-w-6xl min-w-0 p-4 md:p-8">
-          {error ? (
+          {pathname === '/label' ? (
+            <Outlet context={{ guilds: guilds ?? [], guild } as ShellContext} />
+          ) : error ? (
             <ErrorAlert title="Could not load guilds" message={error} />
           ) : guilds === null ? (
             <div className="flex flex-col gap-4">
               <Skeleton className="h-24 w-full" />
               <Skeleton className="h-96 w-full" />
             </div>
-          ) : guild || pathname === '/label' ? (
+          ) : guild ? (
             <Outlet context={{ guilds, guild } satisfies ShellContext} />
           ) : (
             <Empty className="border">

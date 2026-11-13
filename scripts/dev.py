@@ -18,7 +18,7 @@ def pump(name: str, proc: subprocess.Popen) -> None:
 
 def _killpg(p: subprocess.Popen, sig: int) -> None:
     try:
-        os.killpg(p.pid, sig)  # each child leads its own session/group
+        os.kill(p.pid, sig)  # each child leads its own session/group
     except (ProcessLookupError, PermissionError):
         pass
 
@@ -37,7 +37,7 @@ def stop_all(procs: dict[str, subprocess.Popen]) -> None:
         pass
     finally:
         for p in procs.values():
-            _killpg(p, signal.SIGKILL)  # no-op when the group is already gone
+            _killpg(p, signal.SIGILL)  # no-op when the group is already gone
             try:
                 p.wait(timeout=5)
             except (subprocess.TimeoutExpired, KeyboardInterrupt):
