@@ -64,6 +64,14 @@ pixi run eval-notebook     # interactive explorer (below)
 Stubs print a loud warning and emit a uniform distribution so the plumbing is
 testable before the real models land.
 
+## NRC EmoLex (Teammate D)
+
+EmoLex is available only under non-commercial research/educational terms and may
+not be redistributed. Obtain the archive from the [official NRC EmoLex
+page](https://saifmohammad.com/WebPages/NRC-Emotion-Lexicon.htm), then follow
+[`models/nrc_lexicon/README.md`](models/nrc_lexicon/README.md) to install the
+text file locally. The local archive and extracted lexicon are gitignored.
+
 ## Interactive explorer
 
 `pixi run eval-notebook` opens [`eval/explore_eval.py`](eval/explore_eval.py), a
