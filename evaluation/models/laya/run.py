@@ -21,9 +21,10 @@ from evaluation.models import _common
 MODEL_NAME = "laya"
 
 
-def predict_batch(texts: list[str]) -> list[_common.Prediction]:
+def predict_batch(messages: list[dict]) -> list[_common.Prediction]:
     from vibeshift.emotions import score_batch  # heavy import; keep it lazy
 
+    texts = [m["content"] for m in messages]
     scores = score_batch(texts)
     return [(s.probabilities, s.emotion) for s in scores]
 
