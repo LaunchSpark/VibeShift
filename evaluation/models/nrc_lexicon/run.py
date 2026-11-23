@@ -40,10 +40,10 @@ NRC_TO_7: dict[str, str] = {
 }
 
 
-def predict_wordcount(texts: list[str]) -> list[_common.Prediction]:
+def predict_wordcount(messages: list[dict]) -> list[_common.Prediction]:
     print("\033[33m[nrc] STUB (wordcount) — uniform probs. "
           "Teammate D: implement EmoLex word counting here.\033[0m")
-    return [(_common.uniform(), NEUTRAL) for _ in texts]
+    return [(_common.uniform(), NEUTRAL) for _ in messages]
 
 
 def predict_macro(messages: list[dict]) -> list[_common.Prediction]:
