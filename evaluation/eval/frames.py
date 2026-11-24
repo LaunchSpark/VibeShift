@@ -11,8 +11,8 @@ import polars as pl
 from evaluation.common.labels import LABELS, NEUTRAL
 from evaluation.eval import metrics
 
-# τ grid for the sweep chart and table: 0.15, 0.20, ..., 0.85.
-TAU_GRID = tuple(round(0.15 + 0.05 * i, 2) for i in range(15))
+# τ grid for the sweep chart and table: 0.0, 0.15, 0.20, ..., 0.85.
+TAU_GRID = (0.0,) + tuple(round(0.15 + 0.05 * i, 2) for i in range(15))
 
 
 def filter_split(messages: list[dict], gold: dict[str, dict], split: str) -> dict[str, dict]:
@@ -77,7 +77,7 @@ def metrics_frame(results: dict[str, dict]) -> pl.DataFrame:
 def sweep_table(
     rows: list[dict], gold: dict[str, dict], taus: tuple[float, ...] = TAU_GRID
 ) -> pl.DataFrame:
-    """Macro-F1, JSD(τ-gated counts vs gold), and % neutral at each τ."""
+    """Macro-F1, neutral-class F1, JSD(τ-gated counts vs gold), and % neutral at each τ."""
     rows = _aligned(rows, gold)
     gold_labels = [gold[r["id"]]["label"] for r in rows]
     gold_mix = metrics.label_mix(gold_labels)
@@ -88,6 +88,7 @@ def sweep_table(
             {
                 "tau": float(tau),
                 "macro_f1": metrics.macro_f1(gold_labels, preds),
+                "neutral_f1": metrics.class_f1(gold_labels, preds, target_label=NEUTRAL),
                 "jsd_gated": metrics.jensen_shannon(metrics.label_mix(preds), gold_mix),
                 "pct_neutral": sum(p == NEUTRAL for p in preds) / max(len(preds), 1),
             }

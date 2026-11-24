@@ -12,10 +12,36 @@ confusion matrix encodes counts on a single-hue blue ramp.
 
 from __future__ import annotations
 
+import contextlib
+import os
+
 import altair as alt
 import polars as pl
 
 from evaluation.common.labels import LABELS
+
+
+@contextlib.contextmanager
+def suppress_font_warnings():
+    """Suppress C-level stderr noise from headless font loading (e.g. malformed system fonts)."""
+    try:
+        null_fd = os.open(os.devnull, os.O_WRONLY)
+        orig_fd = os.dup(2)
+        os.dup2(null_fd, 2)
+        os.close(null_fd)
+        try:
+            yield
+        finally:
+            os.dup2(orig_fd, 2)
+            os.close(orig_fd)
+    except Exception:
+        yield
+
+
+def save_chart(chart: alt.Chart, path: str | os.PathLike, ppi: int = 200) -> None:
+    """Save an Altair chart to image while cleanly suppressing C-level font warnings."""
+    with suppress_font_warnings():
+        chart.save(str(path), ppi=ppi)
 
 # Fixed model -> categorical slot. Color follows the model, never its rank.
 MODEL_ORDER = (

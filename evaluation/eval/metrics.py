@@ -18,6 +18,7 @@ The τ rule (``gated_label``) is shared by the report and the τ sweep.
 from __future__ import annotations
 
 import math
+import typing
 
 import numpy as np
 from sklearn.metrics import f1_score
@@ -86,6 +87,55 @@ def macro_f1(gold_labels: list[str], pred_labels: list[str]) -> float:
     return float(
         f1_score(gold_labels, pred_labels, labels=list(LABELS), average="macro", zero_division=0)
     )
+
+
+def class_f1(gold_labels: list[str], pred_labels: list[str], target_label: str = NEUTRAL) -> float:
+    """Compute binary/per-class F1 for a specific target label (default: neutral)."""
+    if not gold_labels:
+        return float("nan")
+    y_true = [1 if g == target_label else 0 for g in gold_labels]
+    y_pred = [1 if p == target_label else 0 for p in pred_labels]
+    return float(f1_score(y_true, y_pred, average="binary", zero_division=0))
+
+
+# --------------------------------------------------------------------------- #
+# bootstrap confidence intervals
+# --------------------------------------------------------------------------- #
+def bootstrap_ci(
+    data: list,
+    metric_fn: typing.Callable[[list], float],
+    n_resamples: int = 1000,
+    ci: float = 0.95,
+    seed: int = 42,
+) -> tuple[float, float, int, bool]:
+    """Compute percentile bootstrap confidence interval.
+
+    Returns:
+        (ci_low, ci_high, n, is_small_sample)
+        where is_small_sample is True if n < 30 (recommended to flag).
+    """
+    n = len(data)
+    if n == 0:
+        return float("nan"), float("nan"), 0, True
+
+    rng = np.random.default_rng(seed)
+    indices = np.arange(n)
+    scores = []
+
+    for _ in range(n_resamples):
+        sample_idx = rng.choice(indices, size=n, replace=True)
+        sample = [data[i] for i in sample_idx]
+        val = metric_fn(sample)
+        if not math.isnan(val):
+            scores.append(val)
+
+    if not scores:
+        return float("nan"), float("nan"), n, n < 30
+
+    alpha = (1.0 - ci) / 2.0
+    low = float(np.percentile(scores, 100.0 * alpha))
+    high = float(np.percentile(scores, 100.0 * (1.0 - alpha)))
+    return low, high, n, n < 30
 
 
 # --------------------------------------------------------------------------- #

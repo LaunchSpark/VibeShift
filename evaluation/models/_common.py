@@ -1,8 +1,12 @@
 """Helpers shared by every model runner.
 
-A runner implements ``predict_batch(texts) -> list[(probs, raw_top_label)]`` and
-calls ``run(model_name, predict_batch)``. This module handles loading the
-messages (real or sample), timing, assembling Contract-2 rows, and writing them.
+A runner implements ``predict_batch(messages) -> list[(probs, raw_top_label)]``
+where each element of *messages* is a full message row (dict with ``content``,
+``preceding_3``, ``preceding_25``, etc.).  Runners that only need the text can
+pull ``m["content"]`` themselves.
+
+``run(model_name, predict_batch)`` handles loading, timing, row assembly, and
+writing the Contract-2 prediction file.
 """
 
 from __future__ import annotations
@@ -15,7 +19,7 @@ from evaluation.common.labels import LABELS
 
 # A runner returns, per message, (probability dict over LABELS, raw argmax label).
 Prediction = tuple[dict[str, float], str]
-PredictBatch = Callable[[list[str]], list[Prediction]]
+PredictBatch = Callable[[list[dict]], list[Prediction]]
 
 
 def run(model_name: str, predict_batch: PredictBatch, *, cost_per_msg: float = 0.0) -> None:
@@ -24,9 +28,8 @@ def run(model_name: str, predict_batch: PredictBatch, *, cost_per_msg: float = 0
     if io.using_sample():
         print(f"[{model_name}] running on the SAMPLE fixture (real dataset not present yet).")
 
-    texts = [m["content"] for m in messages]
     t0 = time.perf_counter()
-    preds = predict_batch(texts)
+    preds = predict_batch(messages)
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     if len(preds) != len(messages):
         raise ValueError(f"{model_name} returned {len(preds)} preds for {len(messages)} messages")
