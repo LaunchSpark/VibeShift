@@ -17,11 +17,11 @@ import httpx
 
 ROOT = Path(__file__).resolve().parent.parent
 DEST = ROOT / "operations" / "tools" / "pocketbase"
-BINARY = DEST / "pocketbase"
+BINARY = DEST / ("pocketbase.exe" if platform.system() == "Windows" else "pocketbase")
 
 
 def asset_name(version: str) -> str:
-    system = {"Darwin": "darwin", "Linux": "linux"}.get(platform.system())
+    system = {"Darwin": "darwin", "Linux": "linux", "Windows": "windows"}.get(platform.system())
     arch = {"x86_64": "amd64", "AMD64": "amd64", "arm64": "arm64", "aarch64": "arm64"}.get(
         platform.machine()
     )
@@ -50,8 +50,9 @@ def install(version: str) -> Path:
     resp = httpx.get(url, follow_redirects=True, timeout=120)
     resp.raise_for_status()
     DEST.mkdir(parents=True, exist_ok=True)
+    member = "pocketbase.exe" if platform.system() == "Windows" else "pocketbase"
     with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
-        data = zf.read("pocketbase")
+        data = zf.read(member)
     BINARY.write_bytes(data)
     BINARY.chmod(BINARY.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     return BINARY

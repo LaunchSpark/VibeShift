@@ -1,5 +1,5 @@
 import { NavLink, useLocation } from 'react-router'
-import { Activity, History, Sparkles, Tags, Users } from 'lucide-react'
+import { Activity, History, MessageSquareText, Sparkles, Tags, Users } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import {
   Sidebar,
@@ -69,6 +69,14 @@ export function AppSidebar({ guilds, guild }: { guilds: Guild[]; guild: Guild | 
                   <NavLink to={{ pathname: '/label', search }}>
                     <Tags />
                     <span>Label data</span>
+                  </NavLink>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild isActive={pathname === '/try-model'}>
+                  <NavLink to={{ pathname: '/try-model', search }}>
+                    <MessageSquareText />
+                    <span>Try model</span>
                   </NavLink>
                 </SidebarMenuButton>
               </SidebarMenuItem>

@@ -197,6 +197,8 @@ dashboard/dist/
 evaluation/predictions/*.jsonl
 evaluation/eval/report/
 evaluation/models/nrc_lexicon/data/
+.local_models/
+NRC-Emotion-Lexicon.zip
 
 # marimo session caches (cell outputs saved next to each notebook)
 __marimo__/

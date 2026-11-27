@@ -195,6 +195,26 @@ class Store:
         rec = await self._message(message_id)
         return StoredMessage.from_record(rec) if rec else None
 
+    async def preceding_messages(self, message: StoredMessage, limit: int = 4) -> list[str]:
+        """Return up to ``limit`` earlier, non-deleted messages in this channel.
+
+        Message snowflakes break timestamp ties and provide a stable chronological
+        boundary. Results are returned oldest first for prompt serialization.
+        """
+        if limit <= 0 or message.created_at is None:
+            return []
+        timestamp = _q(_to_pb(message.created_at))
+        target_id = _q(message.message_id)
+        flt = (
+            f"channel_id={_q(message.channel_id)} && deleted_at=\"\" && "
+            f"(created_at<{timestamp} || "
+            f"(created_at={timestamp} && message_id<{target_id}))"
+        )
+        items = await self._list(
+            "messages", flt, "-created_at,-message_id", per_page=limit
+        )
+        return [r.get("content") or "" for r in reversed(items)]
+
     async def save_score(self, message_id: str, emotion: str, probabilities: dict,
                          confidence: float, model_id: str,
                          rollup_applied: bool | None = None) -> None:

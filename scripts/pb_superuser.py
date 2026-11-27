@@ -5,6 +5,7 @@ Reads PB_SUPERUSER_EMAIL / PB_SUPERUSER_PASSWORD from the environment or .env.
 import os
 import subprocess
 from pathlib import Path
+from scripts.install_pocketbase import BINARY
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -25,7 +26,7 @@ if __name__ == "__main__":
     email = cfg.get("PB_SUPERUSER_EMAIL") or "admin@example.com"
     password = cfg.get("PB_SUPERUSER_PASSWORD") or "12345678"
     subprocess.run(
-        [str(ROOT / "operations/tools/pocketbase/pocketbase"), "superuser", "upsert",
+        [str(BINARY), "superuser", "upsert",
          email, password, "--dir=operations/data/pocketbase", "--migrationsDir=pb_migrations"],
         check=True, cwd=ROOT,
     )

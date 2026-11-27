@@ -10,11 +10,27 @@ from huggingface_hub import snapshot_download
 from tqdm.auto import tqdm
 
 MODEL_REPO = "LaunchSpark/laya-emotion-tracker"
-# The 7-label checkpoint (joy, sadness, anger, fear, disgust, surprise, neutral), fine-tuned
-# on GoEmotions by notebooks/finetune_laya_emotions.py. The 13-label one is "v1-13-labels".
-MODEL_REVISION = "v2-7-labels"
-# Stored on every scored message, so a message's scores can be traced to the checkpoint.
-MODEL_ID = f"{MODEL_REPO}@{MODEL_REVISION}"
+# The formerly pinned ``v2-7-labels`` ref is no longer present on Hugging Face.
+# Pin the available checkpoint commit; its task schema is overridden below to
+# the project's seven labels so the bot and evaluation use the same output set.
+MODEL_REVISION = "e7fdadbb5de7efe2ac9dad4511509df14a793554"
+# Keep checkpoint identity and inference contract together so W=1 scores are
+# distinguishable from scores made with the W=5 context prompt.
+MODEL_ID = f"{MODEL_REPO}@{MODEL_REVISION}+w5-context-v1"
+CONTEXT_INSTRUCTIONS = (
+    "Classify the emotion expressed by the TARGET MESSAGE. Use earlier messages "
+    "only to understand its context; do not classify their emotions. Choose the "
+    "single best category for the target."
+)
+EMOTION_CRITERIA = {
+    "joy": "Happiness, amusement, excitement, gratitude, affection, or positive enjoyment.",
+    "sadness": "Sadness, grief, disappointment, loneliness, or emotional distress.",
+    "anger": "Anger, irritation, frustration, hostility, or outrage.",
+    "fear": "Fear, anxiety, worry, nervousness, or threat.",
+    "disgust": "Disgust, revulsion, contempt, or strong aversion.",
+    "surprise": "Surprise, astonishment, or unexpectedness without a stronger other emotion.",
+    "neutral": "No clear emotion is expressed by the target message in its context.",
+}
 
 
 @cache
@@ -27,6 +43,11 @@ def load_model() -> tuple["laya.Agent", dict]:
     model_dir = snapshot_download(MODEL_REPO, revision=MODEL_REVISION)
     agent = laya.Agent(model_dir)
     questions = json.loads((Path(model_dir) / "questions.json").read_text())
+    # Laya accepts a question schema at inference time. The available checkpoint
+    # has a stale 13-label schema, so use the project's seven labels and the
+    # context-aware instruction without modifying its large weight files.
+    questions["emotion_tracker"]["instructions"] = CONTEXT_INSTRUCTIONS
+    questions["emotion_tracker"]["criteria"] = EMOTION_CRITERIA
     return agent, questions
 
 
@@ -57,7 +78,7 @@ class Score:
 
 
 def score_batch(texts: list[str]) -> list[Score]:
-    """Score texts in one batched call, keeping the full per-label distribution."""
+    """Score W=5 serialized inputs in one call, retaining full probabilities."""
     if not texts:
         return []
     agent, questions = load_model()

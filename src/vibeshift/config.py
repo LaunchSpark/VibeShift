@@ -12,3 +12,4 @@ class Settings:
     tz: str = field(default_factory=lambda: _env("VIBESHIFT_TZ", "UTC"))
     score_chunk: int = field(default_factory=lambda: int(_env("SCORE_CHUNK", "8")))
     job_poll_seconds: float = field(default_factory=lambda: float(_env("JOB_POLL_SECONDS", "5")))
+    model_api_port: int = field(default_factory=lambda: int(_env("VIBESHIFT_MODEL_API_PORT", "8765")))

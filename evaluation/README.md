@@ -64,6 +64,26 @@ pixi run eval-notebook     # interactive explorer (below)
 Stubs print a loud warning and emit a uniform distribution so the plumbing is
 testable before the real models land.
 
+## Supplied W=5 human-label comparison
+
+For the separately supplied one-annotator W=5 labels, use the dedicated run
+that aligns predictions by message ID, uses a deterministic conversation-grouped
+80/20 split, calibrates each model's neutral threshold on train/calibration data,
+and reports metrics on the same held-out conversations. This run sends each model
+the target message and up to four preceding messages. It does not write to the
+shared W=1/W=4 consensus files or prediction contracts.
+
+```powershell
+pixi run eval-w5-compare --models distilroberta,laya,nrc_emolex,local_llm
+```
+
+`local_llm` is the open-weight Qwen2.5-0.5B-Instruct model and runs without an API
+key. The full report and per-model predictions, tau sweeps, classification tables,
+and confusion matrices are written to `evaluation/results/human_labeled_w5/`.
+Model weights and the licensed EmoLex word list are stored locally and ignored by
+Git. See [`HUMAN_W5_EXPERIMENT.md`](HUMAN_W5_EXPERIMENT.md) for methodology,
+commands, metrics, and limitations.
+
 ## NRC EmoLex (Teammate D)
 
 EmoLex is available only under non-commercial research/educational terms and may
