@@ -6,10 +6,11 @@ from pathlib import Path
 
 import httpx
 import pytest
+from scripts.install_pocketbase import BINARY
 
 ROOT = Path(__file__).resolve().parent.parent
 PB_VERSION = "0.40.5"
-PB_BIN = ROOT / "operations" / "tools" / "pocketbase" / "pocketbase"
+PB_BIN = BINARY
 
 
 def _free_port() -> int:
@@ -54,7 +55,9 @@ def pb_url(pb_binary, tmp_path) -> str:
             except httpx.HTTPError:
                 pass
             if proc.poll() is not None or time.time() > deadline:
-                raise RuntimeError("PocketBase failed to start")
+                log.flush()
+                detail = (tmp_path / "pb.log").read_text(errors="replace")[-4000:]
+                raise RuntimeError(f"PocketBase failed to start; log tail:\n{detail}")
             time.sleep(0.1)
         yield url
     finally:

@@ -1,0 +1,51 @@
+{
+  "seed": 4240,
+  "human_split": "StratifiedGroupKFold 5-fold, first fold; group=conversation",
+  "machine_split": "StratifiedGroupKFold 5-fold, first fold; group=conversation",
+  "train_test_conversation_overlap": [],
+  "human_train_rows": 913,
+  "human_test_rows": 214,
+  "machine_train_rows": 1800,
+  "machine_test_rows": 400,
+  "tau_calibration_rows": 271,
+  "tau_calibration_human_rows": 92,
+  "tau_calibration_machine_rows": 179,
+  "tau_calibration_note": "stratified sample from training conversations; all 80% train rows were used for fitting",
+  "train_label_counts": {
+    "neutral": 2095,
+    "sadness": 142,
+    "anger": 96,
+    "joy": 197,
+    "fear": 25,
+    "surprise": 95,
+    "disgust": 63
+  },
+  "test_label_counts": {
+    "surprise": 27,
+    "neutral": 493,
+    "disgust": 8,
+    "joy": 33,
+    "sadness": 27,
+    "anger": 21,
+    "fear": 5
+  },
+  "machine_label_counts_test": {
+    "neutral": 326,
+    "surprise": 14,
+    "anger": 18,
+    "disgust": 2,
+    "sadness": 18,
+    "joy": 18,
+    "fear": 4
+  },
+  "human_test_label_counts": {
+    "surprise": 13,
+    "neutral": 167,
+    "disgust": 6,
+    "joy": 15,
+    "sadness": 9,
+    "anger": 3,
+    "fear": 1
+  },
+  "human_machine_conversation_overlap": []
+}

@@ -14,10 +14,25 @@ from vibeshift.config import Settings
 from vibeshift.emotions import load_model, predict_emotion, score_batch
 from vibeshift.history import (create_downtime_jobs, ensure_downtime_job, job_loop,
                                to_new_message)
+from vibeshift.model_api import ModelScoringApi
 from vibeshift.scorer import Scorer
 from vibeshift.store import Store
 
 log = logging.getLogger("vibeshift")
+
+
+class VibeShiftBot(commands.Bot):
+    def __init__(self, *args, model_api: ModelScoringApi, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.model_api = model_api
+
+    async def setup_hook(self) -> None:
+        await asyncio.to_thread(load_model)
+        await self.model_api.start()
+
+    async def close(self) -> None:
+        await self.model_api.close()
+        await super().close()
 
 
 class Handlers:
@@ -199,7 +214,8 @@ def make_bot(settings: Settings | None = None) -> commands.Bot:
     intents = discord.Intents.default()
     intents.message_content = True  # "Message Content Intent" in the dev portal
     intents.members = True  # "Server Members Intent" in the dev portal
-    bot = commands.Bot(command_prefix="!", intents=intents)
+    bot = VibeShiftBot(command_prefix="!", intents=intents,
+                       model_api=ModelScoringApi(settings.model_api_port))
 
     store = Store(settings.pocketbase_url)
     scorer = Scorer(store, score_batch, settings.score_chunk, tz)
@@ -218,10 +234,6 @@ def make_bot(settings: Settings | None = None) -> commands.Bot:
             job_loop(bot, store, tz, settings.job_poll_seconds, h.outstanding_downtime)))
         for g in list(bot.guilds):
             await h.retry(f"sync guild {g.id}", lambda g=g: h.sync_guild(g))
-
-    @bot.event
-    async def setup_hook():
-        await asyncio.to_thread(load_model)  # warm the model off the event loop
 
     @bot.event
     async def on_ready():
@@ -292,10 +304,28 @@ def main():
     logging.basicConfig(level=logging.INFO)
     # httpx logs every PocketBase poll at INFO; keep only its warnings and errors.
     logging.getLogger("httpx").setLevel(logging.WARNING)
-    token = os.environ.get("DISCORD_TOKEN")
-    if not token:
-        raise SystemExit("DISCORD_TOKEN is not set; copy .env.example to .env and fill it in.")
-    make_bot().run(token, log_handler=None)
+    settings = Settings()
+    token = os.environ.get("DISCORD_TOKEN", "").strip()
+    if token:
+        log.info("DISCORD_TOKEN is configured; starting the Discord bot and local scoring API")
+        make_bot(settings).run(token, log_handler=None)
+        return
+
+    log.warning("DISCORD_TOKEN is empty; starting local model scoring only (no Discord connection)")
+
+    async def serve_local_model():
+        await asyncio.to_thread(load_model)
+        api = ModelScoringApi(settings.model_api_port)
+        await api.start()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            await api.close()
+
+    try:
+        asyncio.run(serve_local_model())
+    except KeyboardInterrupt:
+        log.info("Local model scoring service stopped")
 
 
 if __name__ == "__main__":

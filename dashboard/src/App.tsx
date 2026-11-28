@@ -11,6 +11,7 @@ import type { ShellContext } from '@/lib/shell'
 import EmotionsPage from '@/pages/emotions'
 import BackfillPage from '@/pages/backfill'
 import LabelPage from '@/pages/label'
+import TryModelPage from '@/pages/try-model'
 
 function Layout() {
   const [filters] = useFilters()
@@ -33,7 +34,9 @@ function Layout() {
           <span className="text-sm font-medium">{guild?.name ?? 'VibeShift'}</span>
         </header>
         <div className="mx-auto w-full max-w-6xl min-w-0 p-4 md:p-8">
-          {error ? (
+          {pathname === '/try-model' ? (
+            <Outlet context={{ guilds: guilds ?? [], guild } satisfies ShellContext} />
+          ) : error ? (
             <ErrorAlert title="Could not load guilds" message={error} />
           ) : guilds === null ? (
             <div className="flex flex-col gap-4">
@@ -64,6 +67,7 @@ export default function App() {
           <Route index element={<EmotionsPage />} />
           <Route path="backfill" element={<BackfillPage />} />
           <Route path="label" element={<LabelPage />} />
+          <Route path="try-model" element={<TryModelPage />} />
         </Route>
       </Routes>
     </BrowserRouter>

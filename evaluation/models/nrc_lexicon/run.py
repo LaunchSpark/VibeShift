@@ -1,34 +1,32 @@
-"""NRC Emotion Lexicon (EmoLex) baselines (owned by Teammate D).
+"""NRC EmoLex baselines (non-commercial research/educational use only).
 
-Two roles, both writing Contract-2 prediction files:
+EmoLex is copyrighted by National Research Council Canada and may not be
+redistributed. Obtain it from the official page and use the local extraction
+helper documented in ``evaluation/models/nrc_lexicon/README.md``. The lexicon
+file stays ignored and local.
 
-1. ``nrc_wordcount`` — per-message 7-class word-count distribution over the
-   message text, with a neutral fallback when no lexicon words match.
-2. ``nrc_macro`` — the M=25 rolling macro-window mood vector: count lexicon hits
-   across ``preceding_25`` (the context window in messages.jsonl). This vector is
-   also the context feature the stacking head concatenates with Laya's probs.
+The 8 NRC emotions map to our schema by retaining joy, sadness, anger, fear,
+disgust, and surprise; trust and anticipation are dropped because the 7-label
+scheme has no matching classes. Polarity columns are unused. Ties use the first
+label in ``LABELS`` order.
 
-NRC EmoLex has 8 emotions + 2 sentiments. Map to our 7 (drop/ fold `trust` and
-`anticipation`, keep `joy/sadness/anger/fear/disgust/surprise`, add `neutral` as
-the fallback). Define that mapping in ``NRC_TO_7`` once the lexicon is loaded.
-
-STUB STATE: returns uniform probs so `pixi run eval-nrc` → `eval-report` runs
-today. Teammate D: download EmoLex, implement ``_counts(text)``, and fill in both
-roles.
-
-    pixi run eval-nrc                        # --role wordcount (default)
-    python -m evaluation.models.nrc_lexicon.run --role macro
+``nrc_wordcount`` counts hits in W=4 context (three preceding messages plus the
+target), with equal weight per token. ``nrc_macro`` counts only
+``preceding_25``; the target is excluded so macro mood is independent of the
+target classifier input.
 """
 
 from __future__ import annotations
 
 import argparse
+import re
+import time
+from collections import Counter
+from pathlib import Path
 
 from evaluation.common import io
-from evaluation.models import _common
-from evaluation.common.labels import NEUTRAL
+from evaluation.common.labels import LABELS, NEUTRAL
 
-# EmoLex emotion -> our 7 labels. Teammate D: complete once the lexicon is loaded.
 NRC_TO_7: dict[str, str] = {
     "joy": "joy",
     "sadness": "sadness",
@@ -36,45 +34,116 @@ NRC_TO_7: dict[str, str] = {
     "fear": "fear",
     "disgust": "disgust",
     "surprise": "surprise",
-    # "trust" / "anticipation" have no 7-label home — fold or drop (D's call).
+    # trust and anticipation are deliberately dropped: no schema equivalent.
 }
 
+LEXICON_PATH = Path(__file__).resolve().parent / "data" / "NRC-Emotion-Lexicon-Wordlevel-v0.92.txt"
+_URL_RE = re.compile(r"https?://\S+|www\.\S+", re.IGNORECASE)
+_DISCORD_TAG_RE = re.compile(r"<(?:(?:@!?\d+)|(?:@&\d+)|(?:#\d+)|(?:a?:[A-Za-z0-9_~]+:\d+))>")
+_WORD_RE = re.compile(r"\b[^\W_]+\b", re.UNICODE)
 
-def predict_wordcount(texts: list[str]) -> list[_common.Prediction]:
-    print("\033[33m[nrc] STUB (wordcount) — uniform probs. "
-          "Teammate D: implement EmoLex word counting here.\033[0m")
-    return [(_common.uniform(), NEUTRAL) for _ in texts]
+
+def tokenize(text: str) -> list[str]:
+    """Lowercase words after removing URLs and Discord mention/emoji markup."""
+    text = _URL_RE.sub(" ", text)
+    text = _DISCORD_TAG_RE.sub(" ", text)
+    return [token.casefold() for token in _WORD_RE.findall(text)]
 
 
-def predict_macro(messages: list[dict]) -> list[_common.Prediction]:
-    print("\033[33m[nrc] STUB (macro) — uniform probs. "
-          "Teammate D: count EmoLex hits across preceding_25 here.\033[0m")
-    return [(_common.uniform(), NEUTRAL) for _ in messages]
+def load_lexicon(path: Path = LEXICON_PATH) -> dict[str, frozenset[str]]:
+    """Load positive word-emotion associations from the official tab-separated file."""
+    if not path.exists():
+        raise SystemExit(
+            f"NRC EmoLex is missing at {path}. Obtain the non-commercial research/educational "
+            "lexicon from https://saifmohammad.com/WebPages/NRC-Emotion-Lexicon.htm, "
+            "then run `python -m evaluation.models.nrc_lexicon.prepare_lexicon <download.zip>`."
+        )
+    words: dict[str, set[str]] = {}
+    with path.open(encoding="utf-8-sig") as stream:
+        for line in stream:
+            fields = line.rstrip("\r\n").split("\t")
+            if len(fields) != 3:
+                continue
+            word, emotion, association = fields
+            label = NRC_TO_7.get(emotion)
+            if label and association == "1":
+                words.setdefault(word.casefold(), set()).add(label)
+    if not words:
+        raise ValueError(f"No supported NRC associations found in {path}")
+    return {word: frozenset(labels) for word, labels in words.items()}
+
+
+def _counts(text: str, lexicon: dict[str, frozenset[str]]) -> Counter[str]:
+    counts: Counter[str] = Counter()
+    for token in tokenize(text):
+        counts.update(lexicon.get(token, ()))
+    return counts
+
+
+def _prediction(counts: Counter[str]) -> tuple[dict[str, float], str]:
+    total = sum(counts.values())
+    if not total:
+        probs = {label: float(label == NEUTRAL) for label in LABELS}
+    else:
+        probs = {label: counts[label] / total for label in LABELS}
+    # max() is stable, so exact ties resolve in the canonical LABELS order.
+    return probs, max(LABELS, key=probs.__getitem__)
+
+
+def predict_wordcount(messages: list[dict], lexicon: dict[str, frozenset[str]] | None = None):
+    """Score target plus its preceding three messages; return prediction and ms per row."""
+    lexicon = lexicon or load_lexicon()
+    predictions = []
+    for message in messages:
+        context = [*message.get("preceding_3", []), message.get("content", "")]
+        start = time.perf_counter()
+        counts = Counter()
+        for text in context:
+            counts.update(_counts(text, lexicon))
+        elapsed = (time.perf_counter() - start) * 1000
+        predictions.append((*_prediction(counts), elapsed))
+    return predictions
+
+
+def predict_macro(messages: list[dict], lexicon: dict[str, frozenset[str]] | None = None):
+    """Score preceding_25 only, excluding the target message."""
+    lexicon = lexicon or load_lexicon()
+    predictions = []
+    for message in messages:
+        start = time.perf_counter()
+        counts = Counter()
+        for text in message.get("preceding_25", []):
+            counts.update(_counts(text, lexicon))
+        elapsed = (time.perf_counter() - start) * 1000
+        predictions.append((*_prediction(counts), elapsed))
+    return predictions
+
+
+def _write_role(model: str, messages: list[dict], results: list[tuple[dict, str, float]]) -> None:
+    rows = [
+        {
+            "id": message["id"],
+            "model": model,
+            "probs": probs,
+            "raw_top_label": raw_top,
+            "latency_ms": round(latency, 4),
+            "cost_usd": 0.0,
+        }
+        for message, (probs, raw_top, latency) in zip(messages, results)
+    ]
+    io.write_predictions(model, rows)
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--role", choices=["wordcount", "macro"], default="wordcount")
     args = ap.parse_args()
-
+    messages = io.load_messages()
+    lexicon = load_lexicon()
     if args.role == "wordcount":
-        _common.run("nrc_wordcount", predict_wordcount)
+        _write_role("nrc_wordcount", messages, predict_wordcount(messages, lexicon))
     else:
-        # macro needs the preceding_25 window, so it runs over full message rows.
-        messages = io.load_messages()
-        preds = predict_macro(messages)
-        rows = [
-            {
-                "id": m["id"],
-                "model": "nrc_macro",
-                "probs": io.normalize_probs(probs),
-                "raw_top_label": raw_top,
-                "latency_ms": 0.0,
-                "cost_usd": 0.0,
-            }
-            for m, (probs, raw_top) in zip(messages, preds)
-        ]
-        io.write_predictions("nrc_macro", rows)
+        _write_role("nrc_macro", messages, predict_macro(messages, lexicon))
 
 
 if __name__ == "__main__":

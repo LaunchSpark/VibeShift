@@ -12,6 +12,15 @@ from vibeshift.store import Store, StoredMessage
 log = logging.getLogger(__name__)
 
 
+def _w5_input(target: str, preceding: list[str]) -> str:
+    """Mark the target explicitly after up to four same-channel messages."""
+    context = preceding[-4:]
+    earlier = "\n".join(
+        f"Earlier message {i + 1}: {text}" for i, text in enumerate(context)
+    )
+    return f"{earlier}\nTARGET MESSAGE: {target}" if earlier else f"TARGET MESSAGE: {target}"
+
+
 class Scorer:
     def __init__(self, store: Store, score_fn: Callable[[list[str]], list[Score]],
                  chunk: int, tz: ZoneInfo):
@@ -33,14 +42,18 @@ class Scorer:
 
     async def _score(self, msgs: list[StoredMessage]) -> list[Score | None]:
         """Score serially in a worker thread; on chunk failure retry each message singly."""
+        contexts = await asyncio.gather(
+            *(self.store.preceding_messages(message, limit=4) for message in msgs)
+        )
+        inputs = [_w5_input(message.content, context) for message, context in zip(msgs, contexts)]
         try:
-            return await asyncio.to_thread(self._call, [m.content for m in msgs])
+            return await asyncio.to_thread(self._call, inputs)
         except Exception:
             log.warning("chunk scoring failed; retrying singly", exc_info=True)
         out: list[Score | None] = []
-        for m in msgs:
+        for m, model_input in zip(msgs, inputs):
             try:
-                out.append((await asyncio.to_thread(self._call, [m.content]))[0])
+                out.append((await asyncio.to_thread(self._call, [model_input]))[0])
             except Exception:
                 log.exception("scoring failed for message %s", m.message_id)
                 out.append(None)

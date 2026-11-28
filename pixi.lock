@@ -704,7 +704,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/win-64/vl-convert-python-2.0.0rc7-py311hba7da13_0.conda
       - conda: https://conda.anaconda.org/conda-forge/win-64/yaml-0.2.5-h6a83c73_3.conda
       - pypi: ./
-      - pypi: git+https://github.com/NandhaKishorM/laya.git#b8a0f0991d95a953411f2e16f91bddc2ffdaf79a
+      - pypi: git+https://github.com/NandhaKishorM/laya.git#d74e8be46ef5241e4ba2b16cd25e896f24f71373
       - pypi: https://files.pythonhosted.org/packages/04/96/92447566d16df59b2a776c0fb82dbc4d9e07cd95062562af01e408583fc4/itsdangerous-2.2.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/32/91/30151a39f7570f448ed84529390628a651d7f27c87d73c9b887f8189695e/docutils-0.23-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/33/ef/6d27fc118f58cb24886da413545a7efb0853d405fddbfd8b2d9ac09fbed4/jupyterlab_widgets-3.0.17-py3-none-any.whl
@@ -717,7 +717,6 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/58/7b/6e8ef26f6d510a7916064fec68d55fcbfbdf7eb01e377480d66a122152d8/propcache-0.5.4-cp312-cp312-win_amd64.whl
       - pypi: https://files.pythonhosted.org/packages/59/31/d1636ba67ee9232a60033d90483e48686aa3856014e59110f29015f97bd2/websockets-17.4-cp312-cp312-win_amd64.whl
       - pypi: https://files.pythonhosted.org/packages/5a/bc/c04fbb2d6366afb0850e39c6d848f2d38066ff6dadccc886b3cb12c39e32/watchdog-7.1.0-py3-none-win_amd64.whl
-      - pypi: https://files.pythonhosted.org/packages/5c/f9/6d3995e78ccf3efad348ba8b3357ad0ea3107512b4385806ef8008fdc46f/vegaml-0.16.1-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/60/97/891a0971e1e4a8c5d2b20bbe0e524dc04548d2307fee33cdeba148fd4fc7/comm-0.2.3-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/60/d1/38f3a3405989a89ac18390803e70c6ad7c7760da4f9b83cbeca0c44a0c72/python_dotenv-1.2.4-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/64/df/f57bbf49607c0f66fd69331efae41cbc24d3d878f53d3fb0fa2d4455ec51/drawdata-0.5.2-py3-none-any.whl
@@ -5884,44 +5883,13 @@ packages:
   - anywidget>=0.11
   - wigglystuff>=0.5
   - discord-py>=2.7,<3
+  - aiohttp>=3.8
   - python-dotenv>=1.0
   - laya @ git+https://github.com/NandhaKishorM/laya.git
   - huggingface-hub
   - tqdm
   - httpx>=0.28
   requires_python: '>=3.11'
-- pypi: git+https://github.com/NandhaKishorM/laya.git#b8a0f0991d95a953411f2e16f91bddc2ffdaf79a
-  name: laya
-  version: 0.4.30
-  requires_dist:
-  - torch>=2.0.0
-  - transformers>=4.48.0
-  - safetensors>=0.4.0
-  - huggingface-hub>=0.20.0
-  - numpy>=1.20.0
-  - vegaml>=0.15.0
-  - cryptography>=41
-  - fastapi>=0.110.0 ; extra == 'serve'
-  - uvicorn>=0.27.0 ; extra == 'serve'
-  - python-multipart>=0.0.9 ; extra == 'serve'
-  - tilelang>=0.1.14 ; extra == 'fast'
-  - mcp>=2.2.0 ; extra == 'mcp'
-  - pydantic>=2.0.0 ; extra == 'structured'
-  - pillow>=9.0 ; extra == 'vision'
-  - torchvision>=0.19 ; extra == 'vision'
-  - soundfile>=0.12 ; extra == 'audio'
-  - onnx ; extra == 'onnx'
-  - onnxruntime ; extra == 'onnx'
-  - onnxscript ; extra == 'onnx'
-  - numpy<2 ; platform_machine == 'x86_64' and sys_platform == 'darwin' and extra == 'onnx'
-  - langchain-core>=0.2.0 ; extra == 'langchain'
-  - langgraph>=0.1.0 ; extra == 'langchain'
-  - langchain-core>=0.2.0 ; extra == 'langgraph'
-  - langgraph>=0.1.0 ; extra == 'langgraph'
-  - llama-index-core>=0.10.0 ; extra == 'llamaindex'
-  - crewai>=0.28.0 ; extra == 'crewai'
-  - agno>=1.1.14,<4 ; extra == 'agno'
-  requires_python: '>=3.10'
 - pypi: git+https://github.com/NandhaKishorM/laya.git#d74e8be46ef5241e4ba2b16cd25e896f24f71373
   name: laya
   version: 0.4.11
@@ -6237,34 +6205,6 @@ packages:
   requires_dist:
   - wrapt ; extra == 'proxy'
   - pydantic ; extra == 'pydantic'
-  requires_python: '>=3.10'
-- pypi: https://files.pythonhosted.org/packages/5c/f9/6d3995e78ccf3efad348ba8b3357ad0ea3107512b4385806ef8008fdc46f/vegaml-0.16.1-py3-none-any.whl
-  name: vegaml
-  version: 0.16.1
-  sha256: 8dd00b63c09c8cb5292fefd2aa76891ed7574422ad0cbc71f22745df4a97458c
-  requires_dist:
-  - torch>=2.4
-  - transformers>=5.17
-  - safetensors>=0.4
-  - huggingface-hub>=0.30,<3.0
-  - numpy>=1.24
-  - cryptography>=42
-  - pillow>=10.0 ; extra == 'vision'
-  - torchvision ; extra == 'vision'
-  - soundfile>=0.12 ; extra == 'audio'
-  - av>=12 ; extra == 'video'
-  - pillow>=10.0 ; extra == 'video'
-  - pytest>=8.0 ; extra == 'dev'
-  - ruff>=0.6 ; extra == 'dev'
-  - tomli>=2.0 ; python_full_version < '3.11' and extra == 'dev'
-  - fastapi>=0.110 ; extra == 'serve'
-  - uvicorn>=0.27 ; extra == 'serve'
-  - mlx>=0.30 ; platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'mlx'
-  - onnx>=1.16 ; extra == 'onnx'
-  - onnxruntime>=1.19 ; extra == 'onnx'
-  - onnxscript>=0.1 ; extra == 'onnx'
-  - mcp>=2.2 ; extra == 'mcp'
-  - pydantic>=2.0 ; extra == 'structured'
   requires_python: '>=3.10'
 - pypi: https://files.pythonhosted.org/packages/5e/e1/7bca6d84dabd228aa8eb4b7f9feac2586aaa9be5505d7d65bf287a615c43/aiohttp-3.14.5-cp312-cp312-macosx_10_13_x86_64.whl
   name: aiohttp

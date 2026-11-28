@@ -20,20 +20,16 @@ column is NaN until gold exists for two window sizes.
 from __future__ import annotations
 
 import argparse
-import os
+import json
+
+from sklearn.metrics import precision_recall_fscore_support
 
 from evaluation.common import io
+from evaluation.common.labels import LABELS
 from evaluation.eval import charts, frames, metrics
 
 REPORT_DIR = io.ROOT / "eval" / "report"
 PPI = 200
-
-
-def _default_tau() -> float:
-    try:
-        return float(os.environ.get("VIBESHIFT_TAU", "0.0"))
-    except ValueError:
-        return 0.0
 
 
 def evaluate_model(
@@ -69,6 +65,15 @@ def evaluate_model(
         "jsd_gated_counts_vs_gold": metrics.jensen_shannon(gated_mix, gold_mix),
         "latency_ms": sum(r["latency_ms"] for r in rows) / max(len(rows), 1),
         "cost_usd": sum(r.get("cost_usd", 0.0) for r in rows),
+        "per_class": {
+            label: {"precision": float(p), "recall": float(r)}
+            for label, p, r in zip(
+                LABELS,
+                *precision_recall_fscore_support(
+                    gold_labels, pred_labels, labels=list(LABELS), zero_division=0,
+                )[:2],
+            )
+        },
     }
 
 
@@ -98,6 +103,15 @@ def _table(results: dict[str, dict]) -> str:
     return "\n".join(lines)
 
 
+def _per_class_table(results: dict[str, dict]) -> str:
+    lines = ["| Model | Label | Precision | Recall |", "|---|---|---:|---:|"]
+    for model, result in results.items():
+        for label in LABELS:
+            values = result["per_class"][label]
+            lines.append(f"| {model} | {label} | {values['precision']:.3f} | {values['recall']:.3f} |")
+    return "\n".join(lines)
+
+
 def _write_charts(
     preds: dict[str, list[dict]], results: dict[str, dict],
     gold: dict[str, dict], messages: list[dict], tau: float,
@@ -118,21 +132,31 @@ def _write_charts(
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Score prediction files against gold labels.")
-    ap.add_argument("--tau", type=float, default=_default_tau(), help="τ cutoff (default VIBESHIFT_TAU or 0.0)")
+    ap.add_argument("--tau", type=float, help="also score at this explicit τ")
     ap.add_argument("--split", choices=["dev", "test", "all"], default="test")
     ap.add_argument("--window", type=int, help="window size whose gold labels to score against")
     args = ap.parse_args()
 
     messages = io.load_messages()
-    gold = frames.filter_split(messages, io.load_consensus(window=args.window), args.split)
-    if not gold:
+    available_windows = io.consensus_windows()
+    if args.window is not None:
+        gold_sets = [(args.window, io.load_consensus(window=args.window))]
+    elif 4 in available_windows:
+        gold_sets = [(4, io.load_consensus(window=4))]
+        if 1 in available_windows:
+            gold_sets.append((1, io.load_consensus(window=1)))
+    elif len(available_windows) == 1:
+        gold_sets = [(available_windows[0], io.load_consensus(window=available_windows[0]))]
+    else:
+        gold_sets = [(None, io.load_consensus())]
+
+    gold_sets = [(window, frames.filter_split(messages, gold, args.split)) for window, gold in gold_sets]
+    if not any(gold for _, gold in gold_sets):
         raise SystemExit(
             f"no gold labels for the messages in messages.jsonl (split={args.split}). "
             "Label, export, then run `pixi run label-consensus --window W`."
         )
     context_ids = io.context_sensitive_ids()
-    windows = io.consensus_windows()
-    window = args.window or (windows[0] if len(windows) == 1 else "sample")
 
     models = io.list_prediction_models()
     if not models:
@@ -141,20 +165,42 @@ def main() -> None:
             "e.g. `pixi run eval-transformers` or `pixi run eval-nrc`."
         )
 
-    print(f"Scoring {len(models)} model(s) on window={window}, split={args.split}, τ={args.tau}, "
-          f"{len(gold)} gold messages.\n")
     preds = {name: io.load_predictions(name) for name in models}
-    results = {name: evaluate_model(rows, gold, args.tau, context_ids) for name, rows in preds.items()}
-
-    table = _table(results)
-    print(table + "\n")
-
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
-    (REPORT_DIR / "metrics.md").write_text(
-        f"# Evaluation report\n\nwindow=`{window}`, split=`{args.split}`, τ=`{args.tau}`, "
-        f"gold messages=`{len(gold)}`\n\n{table}\n"
-    )
-    _write_charts(preds, results, gold, messages, args.tau)
+    tau_star_path = REPORT_DIR / "tau_star.json"
+    tau_star = json.loads(tau_star_path.read_text(encoding="utf-8")) if tau_star_path.exists() else {}
+    tau_values = [("τ = 0", 0.0)]
+    if tau_star:
+        tau_values.append(("τ = τ* (selected on dev)", None))
+    if args.tau is not None and args.tau != 0.0:
+        tau_values.append((f"τ = {args.tau:g} (requested)", args.tau))
+
+    sections = ["# Evaluation report", "", f"split=`{args.split}` · primary gold is W=4 when available", ""]
+    primary_results = primary_gold = None
+    for window, gold in gold_sets:
+        if not gold:
+            continue
+        window_name = f"W={window}" if window is not None else "sample/legacy gold"
+        sections.extend([f"## {window_name}", "", f"Gold messages: {len(gold)}", ""])
+        for tau_name, explicit_tau in tau_values:
+            results = {
+                name: evaluate_model(
+                    rows, gold,
+                    float(tau_star.get(name, 0.0)) if explicit_tau is None else explicit_tau,
+                    context_ids,
+                )
+                for name, rows in preds.items()
+            }
+            sections.extend([f"### {tau_name}", "", _table(results), "", "Per-class precision and recall", "",
+                             _per_class_table(results), ""])
+            if window == 4 or (window is None and primary_results is None):
+                if tau_name == "τ = 0":
+                    primary_results, primary_gold = results, gold
+        print(f"Scored {len(models)} model(s) on {window_name}, split={args.split}.")
+
+    (REPORT_DIR / "metrics.md").write_text("\n".join(sections), encoding="utf-8")
+    if primary_results is not None and primary_gold is not None:
+        _write_charts(preds, primary_results, primary_gold, messages, 0.0)
     print(f"Wrote table and charts -> {REPORT_DIR.relative_to(io.ROOT.parent)}/")
 
 

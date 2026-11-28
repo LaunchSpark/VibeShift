@@ -7,4 +7,10 @@ import { defineConfig } from 'vitest/config'
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: { alias: { '@': path.resolve(__dirname, './src') } },
+  server: {
+    proxy: {
+      '/api/model-score': 'http://127.0.0.1:8765',
+      '/api/model-health': 'http://127.0.0.1:8765',
+    },
+  },
 })

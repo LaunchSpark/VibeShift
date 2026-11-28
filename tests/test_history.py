@@ -429,7 +429,9 @@ class ScriptBot:
 async def _run_script(store, bot, jid, out, done):
     import asyncio
     task = asyncio.create_task(job_loop(bot, store, TZ, 0.001, out))
-    for _ in range(300):
+    # The gone check has exponential backoff; allow enough wall time for the
+    # final scripted state on slower Windows/PocketBase test runs.
+    for _ in range(1000):
         await asyncio.sleep(0.01)
         if await done():
             break

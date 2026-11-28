@@ -1,0 +1,201 @@
+# VibeShift Project Report Handoff
+
+This document collects the project context, combined-dataset experiment design,
+results, and limitations needed to write or finish a course project report. It
+contains aggregate results only; source Discord messages, human annotation rows,
+and per-message identifiers are intentionally kept out of this handoff.
+
+## Project summary
+
+VibeShift is a Discord community text analytics project. The bot captures
+eligible server messages, scores them with an emotion classifier, and stores
+scores for a dashboard that shows aggregate trends. Its seven output classes are
+**joy, sadness, anger, fear, disgust, surprise, and neutral**. These are model
+predictions from text; they are not claims about a person's internal emotional
+state.
+
+The project evaluates whether pretrained and supervised classifiers can match
+human message labels and how well the classes are represented. It also
+investigates a semantic-space baseline and a neutral confidence threshold (tau,
+`τ`).
+
+## Combined-data experiment
+
+### Data and split
+
+The experiment combines 1,127 human-labeled W=5 messages with 2,200 machine-
+labeled W=5 messages generated from conversations excluded from the human set.
+The machine labels come from the pretrained Laya scorer, with narrow first-person
+emotion-phrase overrides and a tau threshold chosen to keep the neutral share
+near the human training distribution. Machine labels are therefore weak labels,
+not independent gold labels.
+
+The split is stratified and grouped by conversation, with no conversation shared
+between train and test:
+
+| Source | Training | Held out | Total |
+|---|---:|---:|---:|
+| Human labeled | 913 | 214 | 1,127 |
+| Machine labeled | 1,800 | 400 | 2,200 |
+| **Combined** | **2,713** | **614** | **3,327** |
+
+All model inputs use W=5 context: the target message and up to four preceding
+messages, with the target identified for classification. The human-only test
+partition has 214 messages from 10 conversations. Neutral is 167/214 (78.0%);
+rare classes have very small support (anger 3, fear 1, disgust 6).
+
+### Methods
+
+The comparison included:
+
+- **Pretrained Laya:** the bot's pinned LaunchSpark checkpoint and W=5 prompt.
+- **Checkpoint identity:** `LaunchSpark/laya-emotion-tracker` revision
+  `e7fdadbb5de7efe2ac9dad4511509df14a793554` with the repository's seven-label
+  schema and target-marked W=5 context instruction.
+- **Learned Behavior Laya (one epoch):** the earlier fine-tuned checkpoint.
+- **Learned Behavior Laya (four epochs):** retrained with the Laya training
+  framework on all 2,713 combined training rows. The encoder was frozen; training
+  used soft cross-entropy, micro-batch 8, gradient accumulation 8, and CUDA on
+  the available GTX 1650. The Laya path applied no class/source sample weights
+  (the TF-IDF models did). Mean training loss by epoch was 0.969, 0.860, 0.734,
+  and 0.669.
+- **Linear SVM, logistic regression, and MLP:** TF-IDF word/character features
+  with source and class sample weights.
+- **Semantic space:** 800-dimensional PPMI token co-occurrence vectors with
+  emotion centroids fitted from training data only.
+
+For thresholding, tau was chosen from a stratified 10% sample of training rows
+to match the human neutral rate, with balanced accuracy and macro-F1 used as tie
+breakers. Note that this calibration sample was also included in model fitting;
+the selected threshold is therefore not based on a separate validation set.
+The four-epoch checkpoint selected `τ = 0` on the human-only and combined
+calibration partitions.
+
+### Human-only held-out results
+
+The human-only held-out partition is the primary estimate of agreement with
+human labels. Scores are accuracy, balanced accuracy, macro-F1, and Cohen's
+kappa.
+
+| Model | Accuracy | Balanced accuracy | Macro-F1 | Kappa |
+|---|---:|---:|---:|---:|
+| Pretrained Laya | 0.626 | **0.373** | **0.316** | **0.262** |
+| Learned Behavior Laya, one epoch | **0.659** | 0.331 | 0.305 | 0.228 |
+| Learned Behavior Laya, four epochs | 0.654 | 0.322 | 0.275 | 0.171 |
+| Linear SVM | 0.771 | 0.141 | 0.124 | -0.010 |
+| Logistic regression | 0.780 | 0.143 | 0.125 | 0.000 |
+| Neural network (MLP) | 0.780 | 0.143 | 0.125 | 0.000 |
+| Semantic space | 0.706 | 0.138 | 0.133 | 0.045 |
+| Always-neutral reference | 0.780 | 0.143 | 0.125 | 0.000 |
+
+The four-epoch model's accuracy was close to the one-epoch model, but its
+balanced accuracy, macro-F1, and kappa were lower. Its training loss decreased,
+but the held-out human metrics did not improve. The three TF-IDF models reached
+high raw accuracy largely by favoring neutral; their balanced accuracy and
+macro-F1 are close to the always-neutral reference. Accuracy alone is not a
+useful basis for ranking these models on this imbalanced dataset.
+
+### Machine-only held-out scores
+
+This subset contains the 400 held-out machine-labeled messages. Machine-only
+metrics measure agreement with pseudo-labels generated by pretrained Laya;
+they are not independent estimates of real-world accuracy.
+
+| Model | Accuracy | Balanced accuracy | Macro-F1 | Cohen's kappa |
+|---|---:|---:|---:|---:|
+| Pretrained Laya | 0.995 | 0.999 | 0.992 | 0.985 |
+| Learned Behavior Laya, one epoch | 0.932 | 0.898 | 0.842 | 0.815 |
+| Learned Behavior Laya, four epochs | 0.912 | 0.843 | 0.789 | 0.732 |
+| Linear SVM | 0.748 | 0.131 | 0.122 | -0.045 |
+| Logistic regression | 0.815 | 0.143 | 0.128 | 0.000 |
+| Neural network (MLP) | 0.807 | 0.149 | 0.143 | 0.011 |
+| Semantic space | 0.653 | 0.270 | 0.150 | 0.029 |
+
+### Combined held-out scores
+
+The combined held-out set contains 214 human-labeled and 400 machine-labeled
+messages (614 total); neutral is 493/614 (80.3%). The aggregate includes both
+label sources, so interpret it alongside the human-only results above.
+
+| Model | Accuracy | Balanced accuracy | Macro-F1 | Cohen's kappa |
+|---|---:|---:|---:|---:|
+| Pretrained Laya | 0.865 | 0.753 | 0.724 | 0.658 |
+| Learned Behavior Laya, one epoch | 0.837 | 0.663 | 0.635 | 0.590 |
+| Learned Behavior Laya, four epochs | 0.816 | 0.612 | 0.602 | 0.495 |
+| Linear SVM | 0.764 | 0.153 | 0.132 | -0.019 |
+| Logistic regression | 0.803 | 0.143 | 0.127 | 0.000 |
+| Neural network (MLP) | 0.798 | 0.147 | 0.137 | 0.006 |
+| Semantic space | 0.679 | 0.246 | 0.146 | 0.037 |
+
+The pretrained model's high machine-only score is expected because it generated
+those weak labels. All machine-only metrics should be reported separately from
+human-only results and should not be presented as independent model accuracy.
+
+## Human-labeled benchmark context
+
+The separate human-labeled W=5 benchmark contains 1,127 messages from 51
+conversations, labeled by one annotator. It compares the pretrained bot scorer,
+the selected Laya model, DistilRoBERTa, NRC EmoLex, and a local zero-shot Qwen
+model. Its experiment design and benchmark context are documented in
+[`evaluation/HUMAN_W5_EXPERIMENT.md`](../evaluation/HUMAN_W5_EXPERIMENT.md).
+
+This benchmark has no inter-annotator reliability estimate because it has one
+annotator. Its 214-message grouped test split contains only one fear example and
+three anger examples, so rare-class estimates are unstable. The experiment does
+not establish consensus human truth or broad Discord generalization.
+
+## Suggested report conclusion
+
+> On a conversation-grouped W=5 holdout, the pretrained and supervised Laya
+> systems showed stronger balanced performance than the TF-IDF and semantic
+> space baselines, but none achieved strong, consistent performance across all
+> seven emotions. Four-epoch fine-tuning reduced training loss but did not
+> improve macro-F1 or agreement on the held-out human labels over the pretrained
+> checkpoint. Because two-thirds of the combined training set used labels
+> generated by pretrained Laya, and the human test set is small and single-
+> annotator, the results should be treated as preliminary. A larger
+> multi-annotator, conversation-grouped evaluation is needed before making
+> claims about reliable emotion detection in Discord communities.
+
+## Limitations and next steps
+
+1. Collect labels from multiple annotators and report agreement before
+   interpreting the test labels as stable ground truth.
+2. Expand the human-held-out set, especially fear, anger, disgust, and surprise.
+3. Keep the tau calibration data out of model fitting; reserve a separate
+   validation split or use nested/grouped cross-validation.
+4. Treat synthetic labels as weak supervision. Compare human-only training,
+   source-weighted training, and weak-label filtering on the same untouched
+   human test set.
+5. Report per-class precision/recall, macro-F1, balanced accuracy, confusion
+   matrices, and conversation-cluster uncertainty intervals alongside raw
+   accuracy.
+6. Complete end-to-end system validation for capture, recovery, latency, and
+   privacy before presenting deployment readiness as established.
+
+## Reproduction and artifact map
+
+The raw Discord export, human-labeled rows, generated weak-label CSV, model
+weights, and message-level prediction files are local inputs or ignored
+artifacts; they are not included in this report commit. Reproduction requires
+authorized access to those files and the pinned Hugging Face model revision.
+
+From the repository root, the main commands are:
+
+```powershell
+pixi run python evaluation/generate_weak_labels_w5.py
+pixi run python evaluation/train_combined_w5.py --epochs 1 --batch-size 8 --bootstrap-iterations 1000
+pixi run python evaluation/train_semantic_combined_w5.py
+pixi run python evaluation/retrain_combined_laya_w5.py --epochs 4 --batch-size 8 --inference-batch-size 8 --bootstrap-iterations 1000
+```
+
+Key aggregate artifacts:
+
+- [`evaluation/results/combined_w5_20261126/metrics.json`](../evaluation/results/combined_w5_20261126/metrics.json)
+- [`evaluation/results/combined_w5_20261126_semantic/metrics.json`](../evaluation/results/combined_w5_20261126_semantic/metrics.json)
+- [`evaluation/results/combined_w5_20261126_laya_retrained/evaluation_report.md`](../evaluation/results/combined_w5_20261126_laya_retrained/evaluation_report.md)
+- [`evaluation/results/combined_w5_20261126_laya_retrained/metrics.json`](../evaluation/results/combined_w5_20261126_laya_retrained/metrics.json)
+
+The learned checkpoint is kept under ignored `operations/data/`; it is large and
+is not pushed. Aggregate metrics and this handoff are suitable for sharing; do
+not distribute message-level data without the project team's privacy review.
