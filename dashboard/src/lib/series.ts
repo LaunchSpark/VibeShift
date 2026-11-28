@@ -2,6 +2,7 @@ import { LABELS, type Label } from './emotions'
 
 export type Rollup = { day: string; count: number; prob_sums: Partial<Record<Label, number>> }
 export type SeriesPoint = { day: string; count: number; values: Record<Label, number | null> }
+export type MinuteMessage = { created_at: string; emotion: Label }
 
 const DAY_MS = 86_400_000
 
@@ -51,6 +52,37 @@ export function buildSeries(rows: Rollup[], from: string, to: string, window: nu
     out.push({ day, count: byDay.get(day)?.count ?? 0, values })
   }
   return out
+}
+
+/** Average scored probabilities into 1,440 one-minute buckets, including the current minute. */
+export function buildMinuteSeries(rows: MinuteMessage[], now = Date.now()): SeriesPoint[] {
+  const minuteMs = 60_000
+  const currentMinute = Math.floor(now / minuteMs) * minuteMs
+  const start = currentMinute - (24 * 60 - 1) * minuteMs
+  const buckets = new Map<number, { count: number; sums: Partial<Record<Label, number>> }>()
+  for (const row of rows) {
+    const timestamp = Date.parse(row.created_at)
+    if (!Number.isFinite(timestamp) || timestamp < start || timestamp >= currentMinute + minuteMs) continue
+    const minute = Math.floor(timestamp / minuteMs) * minuteMs
+    const bucket = buckets.get(minute) ?? { count: 0, sums: {} }
+    bucket.count += 1
+    bucket.sums[row.emotion] = (bucket.sums[row.emotion] ?? 0) + 1
+    buckets.set(minute, bucket)
+  }
+
+  return Array.from({ length: 24 * 60 }, (_, i) => {
+    const minute = start + i * minuteMs
+    const bucket = buckets.get(minute)
+    const values = {} as Record<Label, number | null>
+    for (const label of LABELS) {
+      values[label] = bucket?.sums[label] ?? 0
+    }
+    return {
+      day: new Date(minute).toISOString(),
+      count: bucket?.count ?? 0,
+      values,
+    }
+  })
 }
 
 export function currentAndPeak(series: SeriesPoint[], label: Label): { current: number | null; peak: number | null } {

@@ -1,4 +1,4 @@
-import { CartesianGrid, Line, LineChart, XAxis, YAxis } from 'recharts'
+import { Brush, CartesianGrid, Line, LineChart, XAxis, YAxis } from 'recharts'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { ChartContainer, ChartTooltip, type ChartConfig } from '@/components/ui/chart'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/ui/empty'
@@ -20,22 +20,24 @@ function dotFor(color: string) {
 }
 
 /** Y-axis ceiling: (max visible value + 5) rounded up to a multiple of 10, capped at 100. */
-function yMax(series: SeriesPoint[], visible: Label[]): number {
+function yMax(series: SeriesPoint[], visible: Label[], resolution: 'daily' | 'minute'): number {
   let max = 0
   for (const p of series) for (const l of visible) max = Math.max(max, p.values[l] ?? 0)
+  if (resolution === 'minute') return Math.max(1, Math.ceil(max))
   return Math.min(100, Math.ceil((max + 5) / 10) * 10)
 }
 
-function subtitle(days: number, ma: number): string {
+function subtitle(days: number, ma: number, resolution: 'daily' | 'minute'): string {
+  if (resolution === 'minute') return 'Last 24 hours · messages per emotion, counted by minute'
   const span = `Last ${days} ${days === 1 ? 'day' : 'days'}`
   return ma === 1 ? `${span} · daily probability scores` : `${span} · ${ma}-day moving average of probability scores`
 }
 
-function Header({ days, ma }: { days: number; ma: number }) {
+function Header({ days, ma, resolution }: { days: number; ma: number; resolution: 'daily' | 'minute' }) {
   return (
     <CardHeader>
       <CardTitle className="text-3xl font-light">Emotion Prevalence History</CardTitle>
-      <CardDescription>{subtitle(days, ma)}</CardDescription>
+      <CardDescription>{subtitle(days, ma, resolution)}</CardDescription>
     </CardHeader>
   )
 }
@@ -43,7 +45,7 @@ function Header({ days, ma }: { days: number; ma: number }) {
 export function EmotionChartCardSkeleton({ days, ma }: { days: number; ma: number }) {
   return (
     <Card>
-      <Header days={days} ma={ma} />
+      <Header days={days} ma={ma} resolution="daily" />
       <CardContent className="flex flex-col gap-4">
         <div className="flex flex-wrap gap-2">
           {Array.from({ length: 4 }, (_, i) => (
@@ -62,6 +64,8 @@ export function EmotionChartCard({
   ma,
   visible,
   onChange,
+  resolution,
+  onResolutionChange,
 }: {
   series: SeriesPoint[]
   days: number
@@ -69,21 +73,37 @@ export function EmotionChartCard({
   /** Canonical LABELS order. */
   visible: Label[]
   onChange: (labels: Label[]) => void
+  resolution: 'daily' | 'minute'
+  onResolutionChange: (resolution: 'daily' | 'minute') => void
 }) {
   const config = Object.fromEntries(
     LABELS.map((l) => [l, { label: labelName(l), color: EMOTION_COLORS[l] }]),
   ) as ChartConfig
   const data = series.map((p) => ({ day: p.day, count: p.count, ...p.values }))
-  const empty = !visible.some((l) => series.some((p) => p.values[l] !== null))
+  const chartLabels = resolution === 'minute' ? LABELS : visible
+  const empty = resolution === 'minute'
+    ? !series.some((p) => p.count > 0)
+    : !visible.some((l) => series.some((p) => p.values[l] !== null))
   const last = data.length - 1
-  const ticks = data.filter((_, i) => (last - i) % 4 === 0).map((d) => d.day)
-  const top = yMax(series, visible)
+  const ticks = data.filter((_, i) => resolution === 'minute' ? i % 120 === 0 : (last - i) % 4 === 0).map((d) => d.day)
+  const top = yMax(series, chartLabels, resolution)
 
   return (
     <Card>
-      <Header days={days} ma={ma} />
+      <Header days={days} ma={ma} resolution={resolution} />
       <CardContent className="flex flex-col gap-4">
         <ToggleGroup
+          type="single"
+          variant="outline"
+          value={resolution}
+          onValueChange={(value) => { if (value === 'daily' || value === 'minute') onResolutionChange(value) }}
+          aria-label="Chart time resolution"
+          className="w-fit"
+        >
+          <ToggleGroupItem value="daily" className="h-8 px-3">Daily</ToggleGroupItem>
+          <ToggleGroupItem value="minute" className="h-8 px-3">Minute by minute</ToggleGroupItem>
+        </ToggleGroup>
+        {resolution === 'daily' && <ToggleGroup
           type="multiple"
           variant="outline"
           spacing={2}
@@ -111,10 +131,20 @@ export function EmotionChartCard({
               </ToggleGroupItem>
             )
           })}
-        </ToggleGroup>
+        </ToggleGroup>}
         <span id="last-emotion-hint" className="sr-only">
           {LAST_HINT}
         </span>
+        {resolution === 'minute' && (
+          <div className="flex flex-wrap gap-x-4 gap-y-2" aria-label="All emotions">
+            {LABELS.map((l) => (
+              <span key={l} className="flex items-center gap-1.5 text-xs">
+                <span className="size-2 rounded-full" style={{ background: EMOTION_COLORS[l] }} />
+                {labelName(l)}
+              </span>
+            ))}
+          </div>
+        )}
         <div className="rounded-xl bg-background/40 p-2 sm:p-4">
           {empty ? (
             <Empty className="h-72">
@@ -133,13 +163,15 @@ export function EmotionChartCard({
                   tickLine={false}
                   axisLine={false}
                   tickMargin={8}
-                  tickFormatter={(d: string) => d.slice(5)}
+                  tickFormatter={(d: string) => resolution === 'minute'
+                    ? new Date(d).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                    : d.slice(5)}
                   tick={{ fontFamily: MONO, fontSize: 12 }}
                 />
                 <YAxis
                   domain={[0, top]}
                   ticks={[0, top / 2, top]}
-                  tickFormatter={(v: number) => `${v}%`}
+                  tickFormatter={(v: number) => resolution === 'minute' ? String(Math.round(v)) : `${v}%`}
                   tickLine={false}
                   axisLine={false}
                   width={44}
@@ -151,7 +183,9 @@ export function EmotionChartCard({
                     const count = payload[0]?.payload?.count ?? 0
                     return (
                       <div className="grid min-w-36 gap-1.5 rounded-lg border bg-popover px-2.5 py-1.5 text-xs shadow-xl">
-                        <div className="font-medium">{String(label)}</div>
+                        <div className="font-medium">{resolution === 'minute'
+                          ? new Date(String(label)).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+                          : String(label)}</div>
                         <div className="text-muted-foreground">{count} messages</div>
                         {payload.map((p) => (
                           <div key={String(p.dataKey)} className="flex items-center justify-between gap-4">
@@ -159,14 +193,16 @@ export function EmotionChartCard({
                               <span className="size-2 rounded-full" style={{ background: p.color }} />
                               {labelName(p.dataKey as Label)}
                             </span>
-                            <span className="font-mono">{typeof p.value === 'number' ? `${Math.round(p.value)}%` : '—'}</span>
+                            <span className="font-mono">{typeof p.value === 'number'
+                              ? resolution === 'minute' ? `${Math.round(p.value)} messages` : `${Math.round(p.value)}%`
+                              : '—'}</span>
                           </div>
                         ))}
                       </div>
                     )
                   }}
                 />
-                {visible.map((l) => (
+                {chartLabels.map((l) => (
                   <Line
                     key={l}
                     dataKey={l}
@@ -174,11 +210,21 @@ export function EmotionChartCard({
                     stroke={EMOTION_COLORS[l]}
                     strokeWidth={2.5}
                     connectNulls={false}
-                    dot={dotFor(EMOTION_COLORS[l])}
+                    dot={resolution === 'minute' ? false : dotFor(EMOTION_COLORS[l])}
                     activeDot={{ r: 4 }}
                     isAnimationActive={false}
                   />
                 ))}
+                <Brush
+                  dataKey="day"
+                  height={24}
+                  travellerWidth={10}
+                  stroke="var(--primary)"
+                  fill="var(--background)"
+                  tickFormatter={(d: string) => resolution === 'minute'
+                    ? new Date(d).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                    : d.slice(5)}
+                />
               </LineChart>
             </ChartContainer>
           )}

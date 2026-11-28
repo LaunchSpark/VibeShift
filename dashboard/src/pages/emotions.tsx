@@ -1,14 +1,14 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useShell } from '@/lib/shell'
 import { ErrorAlert, InfoAlert } from '@/components/app-alert'
 import { EmotionChartCard, EmotionChartCardSkeleton } from '@/components/emotion-chart-card'
 import { EmotionStatCards, EmotionStatCardsSkeleton } from '@/components/emotion-stat-cards'
 import { FiltersPanel } from '@/components/filters-panel'
 import { useFetched } from '@/hooks/use-fetched'
-import { fetchChannels, fetchEarliestRollupDay, fetchGuild, fetchMembers, fetchPendingCount, fetchRollups } from '@/lib/data'
+import { fetchChannels, fetchEarliestRollupDay, fetchGuild, fetchMembers, fetchPendingCount, fetchRecentScoredMessages, fetchRollups } from '@/lib/data'
 import { LABELS, type Label } from '@/lib/emotions'
 import { earliestDay, resolveRange, useFilters } from '@/lib/filters'
-import { buildSeries, shiftDay, topEmotions } from '@/lib/series'
+import { buildMinuteSeries, buildSeries, shiftDay, topEmotions } from '@/lib/series'
 
 const DAY_MS = 86_400_000
 const todayUtc = () => new Date().toISOString().slice(0, 10)
@@ -21,6 +21,15 @@ export default function EmotionsPage() {
 
 function EmotionsView({ gid, historyDepth }: { gid: string; historyDepth: string | null }) {
   const [filters, update] = useFilters()
+  const [resolution, setResolution] = useState<'daily' | 'minute'>('daily')
+  const [minuteWindowEnd, setMinuteWindowEnd] = useState(() => Date.now())
+  useEffect(() => {
+    if (resolution !== 'minute') return
+    const timer = window.setInterval(() => {
+      setMinuteWindowEnd(Date.now())
+    }, 60_000)
+    return () => window.clearInterval(timer)
+  }, [resolution])
   const { ma, emotions } = filters
   const peopleKey = filters.people.join(',')
   const channelsKey = filters.channels.join(',')
@@ -39,6 +48,12 @@ function EmotionsView({ gid, historyDepth }: { gid: string; historyDepth: string
   const channels = useFetched(gid, () => fetchChannels(gid))
   const members = useFetched(gid, () => fetchMembers(gid))
   const pending = useFetched(gid, () => fetchPendingCount(gid))
+  const lifetimeFrom = bounds.data ?? historyDepth ?? today
+  const lifetimeRollups = useFetched(`${gid}|lifetime|${bounds.loading}|${lifetimeFrom}|${today}`, () =>
+    bounds.loading
+      ? Promise.resolve(null)
+      : fetchRollups({ guild: gid, from: lifetimeFrom, to: today, channels: [], people: [] }),
+  )
   const rollups = useFetched(`${gid}|${waiting}|${from}|${to}|${ma}|${peopleKey}|${channelsKey}`, () =>
     waiting ? Promise.resolve(null) : fetchRollups({
       guild: gid,
@@ -51,6 +66,20 @@ function EmotionsView({ gid, historyDepth }: { gid: string; historyDepth: string
   const rows = waiting ? null : rollups.data
 
   const series = useMemo(() => (rows ? buildSeries(rows, from, to, ma) : []), [rows, from, to, ma])
+  const minuteSince = new Date(Math.floor(minuteWindowEnd / 60_000) * 60_000 - (24 * 60 - 1) * 60_000).toISOString()
+  const minuteKey = `${gid}|${resolution}|${minuteSince}|${minuteWindowEnd}|${peopleKey}|${channelsKey}`
+  const minuteMessages = useFetched(minuteKey, () => resolution === 'minute'
+    ? fetchRecentScoredMessages({
+        guild: gid,
+        channels: channelsKey ? channelsKey.split(',') : [],
+        people: peopleKey ? peopleKey.split(',') : [],
+      }, minuteSince)
+    : Promise.resolve([]),
+  )
+  const minuteSeries = useMemo(
+    () => minuteMessages.data ? buildMinuteSeries(minuteMessages.data, minuteWindowEnd) : [],
+    [minuteMessages.data, minuteWindowEnd],
+  )
   // Rank over the visible window only, not the moving-average lookback padding.
   const top = useMemo(
     () => (rows ? topEmotions(rows.filter((r) => r.day >= from && r.day <= to), 4) : []),
@@ -78,6 +107,8 @@ function EmotionsView({ gid, historyDepth }: { gid: string; historyDepth: string
       {channels.error && <ErrorAlert title="Could not load channels" message={channels.error} />}
       {members.error && <ErrorAlert title="Could not load people" message={members.error} />}
       {pending.error && <ErrorAlert title="Could not load pending count" message={pending.error} />}
+      {lifetimeRollups.error && <ErrorAlert title="Could not load all-time emotion totals" message={lifetimeRollups.error} />}
+      {resolution === 'minute' && minuteMessages.error && <ErrorAlert title="Could not load minute-level data" message={minuteMessages.error} />}
       {(pending.data ?? 0) > 0 && <InfoAlert title={`${pending.data} messages waiting to be scored`} />}
       {rows === null ? (
         rollups.error ? null : (
@@ -89,13 +120,18 @@ function EmotionsView({ gid, historyDepth }: { gid: string; historyDepth: string
       ) : (
         <>
           <EmotionChartCard
-            series={series}
+            series={resolution === 'minute' ? minuteSeries : series}
             days={days}
             ma={ma}
             visible={visible}
             onChange={(next) => update({ emotions: next })}
+            resolution={resolution}
+            onResolutionChange={setResolution}
           />
-          <EmotionStatCards series={series} visible={visible} />
+          <section className="flex flex-col gap-3" aria-labelledby="lifetime-emotion-heading">
+            <h2 id="lifetime-emotion-heading" className="text-2xl font-light">Percentage Of Emotions Over Server Life</h2>
+            {lifetimeRollups.data ? <EmotionStatCards rows={lifetimeRollups.data} /> : lifetimeRollups.loading ? <EmotionStatCardsSkeleton /> : null}
+          </section>
         </>
       )}
     </div>

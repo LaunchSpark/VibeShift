@@ -1,5 +1,6 @@
 import { pb } from './pb'
 import type { Rollup } from './series'
+import { LABELS, type Label } from './emotions'
 
 export type Guild = { id: string; guild_id: string; name: string; icon_url: string; history_depth: string | null }
 export type Channel = { id: string; channel_id: string; guild_id: string; name: string; type: string }
@@ -17,6 +18,7 @@ export type Job = {
 }
 
 export type RollupParams = { guild: string; from: string; to: string; channels: string[]; people: string[] }
+export type ScoredMessage = { created_at: string; emotion: Label }
 
 const q = (v: string) => `"${v.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
 const orGroup = (field: string, vals: string[]) => `(${vals.map((v) => `${field} = ${q(v)}`).join(' || ')})`
@@ -71,6 +73,26 @@ export async function fetchRollups(p: RollupParams): Promise<Rollup[]> {
     .collection('daily_rollups')
     .getFullList({ filter: rollupFilter(p), fields: 'day,count,prob_sums', batch: 1000 })
   return rows.map((r) => ({ day: r.day, count: r.count, prob_sums: r.prob_sums ?? {} }))
+}
+
+export async function fetchRecentScoredMessages(p: Pick<RollupParams, 'guild' | 'channels' | 'people'>, since: string): Promise<ScoredMessage[]> {
+  const parts = [
+    `guild_id = ${q(p.guild)}`,
+    `created_at >= ${q(since)}`,
+    'score_status = "scored"',
+    'deleted_at = ""',
+  ]
+  if (p.channels.length) parts.push(orGroup('channel_id', p.channels))
+  if (p.people.length) parts.push(orGroup('author_id', p.people))
+  const rows = await pb.collection('messages').getFullList({
+    filter: parts.join(' && '),
+    fields: 'created_at,emotion',
+    sort: 'created_at',
+    batch: 1000,
+  })
+  return rows
+    .filter((r) => LABELS.includes(r.emotion as Label))
+    .map((r) => ({ created_at: r.created_at, emotion: r.emotion as Label }))
 }
 
 export const earliestRollupQuery = (guild: string) =>
